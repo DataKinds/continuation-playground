@@ -4,8 +4,9 @@ package:
     - console
     - effect
     - prelude
-    - sequences
     - unordered-collections
+    - strings
+    - halogen
   test:
     main: Test.Main
     dependencies: []
