@@ -7,6 +7,7 @@ package:
     - unordered-collections
     - strings
     - halogen
+    - debug
   test:
     main: Test.Main
     dependencies: []

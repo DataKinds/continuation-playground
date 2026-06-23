@@ -12,6 +12,7 @@ import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Rec.Class (Step(..), tailRecM)
 import Data.Array ((:))
 import Data.Array as A
+import Debug (traceM)
 import Data.Array.NonEmpty as NA
 import Data.HashMap (HashMap)
 import Data.HashMap as HM
@@ -40,6 +41,15 @@ emptyRealState :: RealState
 emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0 }
 
 throw = error >>> throwError
+throwUnderflow = throw "stack underflow" -- TODO: better errors
+throwEOF after = throw $ "expected word after " <> after <> ", got EOF"
+
+
+nextWordTrimmedOrEOF errMsg = do
+  nw <- nextWordTrimmed
+  case nw of
+    Nothing -> throwEOF errMsg
+    Just nw' -> pure nw'
 
 --| Load up the standard library.
 gainKnowledge :: forall m. MonadEval m => m Unit
@@ -47,14 +57,23 @@ gainKnowledge = do
   recordNative "main" "help" $ do
     liftEffect $ Console.log "need help?!"
   recordNativeSyntax "main" "\\" $ do
-    maybeNw <- nextWordTrimmed
+    nw <- nextWordTrimmedOrEOF "backslash"
     mn <- getOpenModule
     sn <- getOpenStack
-    case maybeNw of
-      Nothing -> throw "expected word after backslash, got EOF"
-      Just nw -> do
-        push mn sn nw
-        pure []
+    push mn sn nw
+    pure []
+
+  recordNative "main" "enter" $ do
+    mn <- getOpenModule
+    sn <- getOpenStack
+    rv <- pop mn sn 
+    case rv of
+      Nothing -> throwUnderflow
+      Just rv' -> enter rv'
+
+  recordNativeSyntax "main" "ENTER:" $ do
+    nw <- nextWordTrimmedOrEOF "ENTER:"
+    pure ["\\", nw, "enter"]
 
 --| Load up functions that hook into the interpreter internals
 gainDebugKnowledge :: RealEval Unit
@@ -229,7 +248,9 @@ instance monadEvalRealEval :: MonadEval RealEval where
         pure unit
       Just (NativeSyntax fmacro) -> do
         expansion <- fmacro
-        _ <- sequence $ map execute expansion
+        -- traceM $ "got an expansion"
+        -- traceM expansion
+        _ <- sequence $ map execute expansion -- TODO: this breaks in cases with nested expansions
         pure unit
       Just (CanonSyntax defmacro) ->
         pure unit -- TODO
