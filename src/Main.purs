@@ -1,12 +1,14 @@
 module Main where
 
 import Control.Monad.State
+import Data.Either
 import Data.Maybe
 import Prelude
+import Common
 
 import App.Button as Button
-import Control.Monad.Error.Class (class MonadThrow, catchError, throwError)
-import Control.Monad.Except (ExceptT)
+import Control.Monad.Error.Class (class MonadThrow, catchError, throwError, try)
+import Control.Monad.Except (ExceptT, runExceptT)
 import Data.Array ((:))
 import Data.Array as A
 import Data.Array.NonEmpty as NA
@@ -20,24 +22,12 @@ import Data.Traversable (sequence, sequence_)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Exception (Error)
+import Effect.Console as Console
+import Effect.Exception (Error, error)
 import Halogen.Aff as HA
 import Halogen.VDom.Driver (runUI)
 import Web.DOM.Document (doctype)
 
-type RValue = String -- Runtime value
-type RStack = Array RValue
-type ModuleName = String
-type StackName = String
-type WordName = String
-
-data Definition evalM = Native (evalM Unit) | Canon (Array String)
-
-type Module evalM =
-  { chain :: Array ModuleName
-  , defs :: HashMap WordName (Definition evalM)
-  , stacks :: HashMap StackName RStack
-  }
 
 emptyModule :: forall m. Module m
 emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty }
@@ -45,18 +35,13 @@ emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty }
 emptyStack :: RStack
 emptyStack = mempty
 
-newtype RealState = RealState
-  { modules :: HashMap ModuleName (Module RealEval)
-  , openModules :: NA.NonEmptyArray ModuleName
-  , source :: Array String
-  , sourceIx :: Int
-  }
-derive instance newtypeRealState :: Newtype RealState _
-
 emptyRealState :: RealState
 emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0 }
 
-type RealEval = StateT RealState (ExceptT Error Effect) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
+
+-- --| Load up the standard library.
+-- emptyRealEval :: String -> RealEval Unit
+-- emptyRealEval str = 
 
 getOrMakeModule :: ModuleName -> RealEval (Module RealEval)
 getOrMakeModule mn = do
@@ -87,7 +72,7 @@ getOpenModule :: RealEval ModuleName
 getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
 
 --| Evaluation monad for the langauge
-class (Monad m, MonadEffect m, MonadThrow String m) <= MonadEval m where
+class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Get a single, raw, space-delimited word from the input, and seek the input forward.
   nextWordRaw :: m (Maybe String)
   --| Add a definition, given a module name, definition name, and definition. 
@@ -111,8 +96,8 @@ class (Monad m, MonadEffect m, MonadThrow String m) <= MonadEval m where
 instance monadEvalRealEval :: MonadEval RealEval where
   nextWordRaw :: RealEval (Maybe String)
   nextWordRaw = do
-    modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
     RealState { source, sourceIx } <- get
+    modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
     pure $ A.index source sourceIx
   record :: ModuleName -> WordName -> Array WordName -> RealEval Unit
   record mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (Canon def) m.defs }
@@ -155,9 +140,10 @@ instance monadEvalRealEval :: MonadEval RealEval where
   leave :: RealEval Unit
   leave = do
     RealState { openModules } <- get
-    let { head: _, tail } = NA.uncons openModules
-        maybeNewModules = NA.fromArray tail -- fails if tail is empty
-    case maybeNewModules of 
+    let
+      { head: _, tail } = NA.uncons openModules
+      maybeNewModules = NA.fromArray tail -- fails if tail is empty
+    case maybeNewModules of
       Nothing -> pure unit -- tried to `leave` the final module, just no-op
       Just newModules -> modify_ \(RealState st) -> RealState st { openModules = newModules }
   execute :: WordName -> RealEval Unit
@@ -165,7 +151,7 @@ instance monadEvalRealEval :: MonadEval RealEval where
     mn <- getOpenModule
     maybeDef <- lookup mn cont
     case maybeDef of
-      Nothing -> throwError $ "unknown word " <> cont
+      Nothing -> throwError <<< error $ "unknown word " <> cont
       -- TODO: also handle syntax words
       Just (Native f) -> f
       Just (Canon def) -> do
@@ -183,17 +169,25 @@ executeNextWord = do
     Just nw -> execute nw
 
 evalRealState :: forall a. RealEval a -> RealState -> (Error -> Effect a) -> Effect a
-evalRealState action starting errHandler = let
-  throwable = evalStateT action starting
-  handled = catchError throwable errHandler
-  in handled
+evalRealState action starting errHandler =
+  let
+    throwable :: ExceptT Error Effect a
+    throwable = evalStateT action starting
+  in
+    do
+      out <- runExceptT throwable
+      case out of
+        Right x -> pure x
+        Left err -> errHandler err
 
 --| Given a string that contains a program, evaluate the program entirely. 
 --| Log both error messages and output to stdout
-evaluate :: forall m. MonadEffect m => String -> m Unit
-evaluate str = let
-  startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
-  in evalRealState startingState executeNextWord
+evaluate :: String -> Effect Unit
+evaluate str =
+  let
+    startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
+  in
+    evalRealState executeNextWord startingState Console.logShow -- TODO: executeNextWord till we can't
 
 words :: String -> Array String
 words = S.split (S.Pattern " ")
