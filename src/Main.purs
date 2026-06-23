@@ -18,6 +18,7 @@ import Data.HashMap as HM
 import Data.List as L
 import Data.List.Lazy as LL
 import Data.Newtype (class Newtype, unwrap)
+import Data.String (trim)
 import Data.String as S
 import Data.Traversable (sequence, sequence_)
 import Data.Tuple (Tuple(..))
@@ -29,9 +30,8 @@ import Halogen.Aff as HA
 import Halogen.VDom.Driver (runUI)
 import Web.DOM.Document (doctype)
 
-
 emptyModule :: forall m. Module m
-emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty }
+emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty, openStacks: NA.singleton "main" }
 
 emptyStack :: RStack
 emptyStack = mempty
@@ -39,12 +39,53 @@ emptyStack = mempty
 emptyRealState :: RealState
 emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0 }
 
+throw = error >>> throwError
+
 --| Load up the standard library.
-gainKnowledge :: RealEval Unit
+gainKnowledge :: forall m. MonadEval m => m Unit
 gainKnowledge = do
   recordNative "main" "help" $ do
     liftEffect $ Console.log "need help?!"
+  recordNativeSyntax "main" "\\" $ do
+    maybeNw <- nextWordTrimmed
+    mn <- getOpenModule
+    sn <- getOpenStack
+    case maybeNw of
+      Nothing -> throw "expected word after backslash, got EOF"
+      Just nw -> do
+        push mn sn nw
+        pure []
 
+--| Load up functions that hook into the interpreter internals
+gainDebugKnowledge :: RealEval Unit
+gainDebugKnowledge = do
+  depend "main" "debug"
+  recordNative "debug" "?" $ do
+    RealState { modules, openModules } <- get
+    mn <- getOpenModule
+    sn <- getOpenStack
+    m@{ chain, defs, stacks, openStacks } <- getOrMakeModule mn
+
+    let
+      lines = join
+        [ [ "module-toy 0. enjoy your stay"
+          , ""
+          , show (HM.size modules) <> " modules loaded (" <> S.joinWith "," (HM.keys modules) <> ")"
+          , "you've entered the scope of " <> show (NA.length openModules) <> " modules. currently " <> mn <> " is active"
+          , ""
+          , "within this module (" <> mn <> "), there are " <> show (HM.size defs) <> " definitions:"
+          ]
+        , HM.toArrayBy (\k v -> "  * " <> k <> ": " <> show v) defs
+        , [ ""
+          , "this module (" <> mn <> ") has the following resolution chain: [" <> S.joinWith "," chain <> "]"
+          ]
+        , [ ""
+          , "within this module (" <> mn <> ") there are " <> show (HM.size stacks) <> " stacks, and " <> sn <> " is active"
+          ]
+        ]
+    liftEffect <<< Console.log <<< S.joinWith "\n" $ lines
+
+--=== Lenses for the module and stack types ===--
 getOrMakeModule :: ModuleName -> RealEval (Module RealEval)
 getOrMakeModule mn = do
   RealState { modules } <- get
@@ -70,8 +111,9 @@ getOrMakeStack mn sn = do
 alterStack :: ModuleName -> StackName -> (RStack -> Maybe RStack) -> RealEval Unit
 alterStack mn sn f = alterModule mn \m@{ stacks } -> pure $ m { stacks = HM.alter (fromMaybe emptyStack >>> f) sn stacks }
 
-getOpenModule :: RealEval ModuleName
-getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
+--| What module should we currently be executing in? TODO: this should be removable
+_getOpenModule' :: RealEval ModuleName
+_getOpenModule' = get <#> \(RealState { openModules }) -> NA.head openModules
 
 --| Evaluation monad for the langauge
 class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
@@ -80,9 +122,16 @@ class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Add a definition, given a module name, definition name, and definition. 
   record :: ModuleName -> String -> Array String -> m Unit
   recordNative :: ModuleName -> String -> m Unit -> m Unit
+  recordNativeSyntax :: ModuleName -> String -> m (Array WordName) -> m Unit
+  --| Query the VM for the currently active module or stack.
+  getOpenModule :: m ModuleName --| What module should we currently be executing in?
+  getOpenStack :: m StackName --| What stack should we be modifying? Note that this is scoped to modules.
   --| Switch the active module used for execution.
   enter :: ModuleName -> m Unit
   leave :: m Unit
+  --| Within the active module, switch the active stack used for execution.
+  into :: StackName -> m Unit
+  outof :: m Unit
   --| Run a continuation in the current module, one word at a time.
   execute :: WordName -> m Unit
   --| Add a dependency between modules for name resolution. Puts a module _inside_ another module
@@ -105,6 +154,7 @@ instance monadEvalRealEval :: MonadEval RealEval where
   record mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (Canon def) m.defs }
   recordNative :: ModuleName -> WordName -> RealEval Unit -> RealEval Unit
   recordNative mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (Native def) m.defs }
+  recordNativeSyntax mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (NativeSyntax def) m.defs }
   depend :: ModuleName -> ModuleName -> RealEval Unit
   depend mn mn' = alterModule mn \m -> pure $ m { chain = mn' : m.chain }
   push :: ModuleName -> StackName -> RValue -> RealEval Unit
@@ -137,6 +187,10 @@ instance monadEvalRealEval :: MonadEval RealEval where
         case maybeDef of
           Nothing -> rec tail
           Just def -> pure $ Just def
+
+  getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
+  getOpenStack = _getOpenModule' >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+
   enter :: ModuleName -> RealEval Unit
   enter mn = modify_ \(RealState st) -> RealState st { openModules = NA.cons mn st.openModules }
   leave :: RealEval Unit
@@ -148,28 +202,61 @@ instance monadEvalRealEval :: MonadEval RealEval where
     case maybeNewModules of
       Nothing -> pure unit -- tried to `leave` the final module, just no-op
       Just newModules -> modify_ \(RealState st) -> RealState st { openModules = newModules }
+  into :: StackName -> RealEval Unit
+  into sn = do
+    mn <- getOpenModule
+    alterModule mn \m -> Just m { openStacks = NA.cons sn m.openStacks }
+  outof :: RealEval Unit
+  outof = do
+    mn <- _getOpenModule' -- TODO: why can't I just call getOpenModule here???
+    alterModule mn \m@{ openStacks } ->
+      let
+        { head: _, tail } = NA.uncons openStacks
+        maybeNewStacks = NA.fromArray tail -- fails if tail is empty
+      in
+        case maybeNewStacks of
+          Nothing -> Just m -- tried to `leave` the final module, just no-op
+          Just newStacks -> Just m { openStacks = newStacks }
   execute :: WordName -> RealEval Unit
   execute cont = do
     mn <- getOpenModule
     maybeDef <- lookup mn cont
     case maybeDef of
       Nothing -> throwError <<< error $ "unknown word " <> cont <> " in module " <> mn
-      -- TODO: also handle syntax words
       Just (Native f) -> f
       Just (Canon def) -> do
         _ <- sequence $ map execute def
         pure unit
+      Just (NativeSyntax fmacro) -> do
+        expansion <- fmacro
+        _ <- sequence $ map execute expansion
+        pure unit
+      Just (CanonSyntax defmacro) ->
+        pure unit -- TODO
+
+--| Like nextWordRaw, but skips whitespace if you don't care.
+nextWordTrimmed :: forall m. MonadEval m => m (Maybe String)
+nextWordTrimmed = do
+  maybeNw <- nextWordRaw
+  case maybeNw of
+    Nothing -> pure Nothing
+    Just nw
+      | trim nw == "" -> nextWordTrimmed -- just whitespace, keep scanning
+      | otherwise -> pure $ Just nw
 
 --| Execute the next word ready to be processed by the VM and seek forward. Returns false if out of input.
 --| Follows two passes: if the word is a macro, it is executed immediately and may consume more words.
 --| If the word is a not a macro, execute its definition.
 executeNextWord :: forall m. MonadEval m => m Boolean
 executeNextWord = do
-  maybeNw <- nextWordRaw
+  maybeNw <- nextWordTrimmed
   case maybeNw of
     Nothing -> pure false
-    Just nw -> execute nw *> pure true
+    Just nw
+      | trim nw == "" -> executeNextWord -- just whitespace, keep scanning
+      | otherwise -> execute nw *> pure true
 
+--| Low level function to carry out an action specified by RealEval.
 evalRealState :: forall a. RealEval a -> RealState -> (Error -> Effect a) -> Effect a
 evalRealState action starting errHandler =
   let
@@ -191,7 +278,7 @@ evaluate str =
     go _ = do
       notDone <- executeNextWord
       pure $ if notDone then Loop unit else Done unit
-    execAction = gainKnowledge *> (tailRecM go unit)
+    execAction = gainKnowledge *> gainDebugKnowledge *> (tailRecM go unit)
   in
     evalRealState execAction startingState Console.logShow -- TODO: executeNextWord till we can't
 
