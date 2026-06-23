@@ -1,14 +1,15 @@
 module Main where
 
+import Common
 import Control.Monad.State
 import Data.Either
 import Data.Maybe
 import Prelude
-import Common
 
 import App.Button as Button
 import Control.Monad.Error.Class (class MonadThrow, catchError, throwError, try)
 import Control.Monad.Except (ExceptT, runExceptT)
+import Control.Monad.Rec.Class (Step(..), tailRecM)
 import Data.Array ((:))
 import Data.Array as A
 import Data.Array.NonEmpty as NA
@@ -38,10 +39,11 @@ emptyStack = mempty
 emptyRealState :: RealState
 emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0 }
 
-
--- --| Load up the standard library.
--- emptyRealEval :: String -> RealEval Unit
--- emptyRealEval str = 
+--| Load up the standard library.
+gainKnowledge :: RealEval Unit
+gainKnowledge = do
+  recordNative "main" "help" $ do
+    liftEffect $ Console.log "need help?!"
 
 getOrMakeModule :: ModuleName -> RealEval (Module RealEval)
 getOrMakeModule mn = do
@@ -151,22 +153,22 @@ instance monadEvalRealEval :: MonadEval RealEval where
     mn <- getOpenModule
     maybeDef <- lookup mn cont
     case maybeDef of
-      Nothing -> throwError <<< error $ "unknown word " <> cont
+      Nothing -> throwError <<< error $ "unknown word " <> cont <> " in module " <> mn
       -- TODO: also handle syntax words
       Just (Native f) -> f
       Just (Canon def) -> do
         _ <- sequence $ map execute def
         pure unit
 
---| Execute the next word ready to be processed by the VM and seek forward.
+--| Execute the next word ready to be processed by the VM and seek forward. Returns false if out of input.
 --| Follows two passes: if the word is a macro, it is executed immediately and may consume more words.
 --| If the word is a not a macro, execute its definition.
-executeNextWord :: forall m. MonadEval m => m Unit
+executeNextWord :: forall m. MonadEval m => m Boolean
 executeNextWord = do
   maybeNw <- nextWordRaw
   case maybeNw of
-    Nothing -> pure unit
-    Just nw -> execute nw
+    Nothing -> pure false
+    Just nw -> execute nw *> pure true
 
 evalRealState :: forall a. RealEval a -> RealState -> (Error -> Effect a) -> Effect a
 evalRealState action starting errHandler =
@@ -186,8 +188,12 @@ evaluate :: String -> Effect Unit
 evaluate str =
   let
     startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
+    go _ = do
+      notDone <- executeNextWord
+      pure $ if notDone then Loop unit else Done unit
+    execAction = gainKnowledge *> (tailRecM go unit)
   in
-    evalRealState executeNextWord startingState Console.logShow -- TODO: executeNextWord till we can't
+    evalRealState execAction startingState Console.logShow -- TODO: executeNextWord till we can't
 
 words :: String -> Array String
 words = S.split (S.Pattern " ")
