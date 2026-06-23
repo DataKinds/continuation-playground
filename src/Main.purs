@@ -7,6 +7,7 @@ import Prelude
 import App.Button as Button
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (ExceptT)
+import Data.Array ((:))
 import Data.Array as A
 import Data.HashMap (HashMap)
 import Data.HashMap as HM
@@ -24,22 +25,6 @@ type ModuleName = String
 type StackName = String
 type WordName = String
 
---| Evaluation monad for the langauge
-class (Monad m, MonadEffect m, MonadThrow String m) <= MonadEval m where
-  --| Get a single, raw, space-delimited word from the input, and seek the input forward.
-  nextWordRaw :: m (Maybe String)
-  --| Add a definition, given a module name, definition name, and definition. 
-  record :: ModuleName -> String -> Array String -> m Unit
-  --| Run a continuation in a module.
-  execute :: ModuleName -> Array String -> m Unit
-  --| Add a dependency between modules for name resolution. Puts a module _inside_ another module
-  depend :: ModuleName -> ModuleName -> m Unit
-  --| Push to a named stack in a module. Creates a stack if it doesn't exist.
-  push :: ModuleName -> StackName -> m Unit
-  pop :: ModuleName -> StackName -> m RValue
-  --| Peek at a value on a stack
-  peek :: ModuleName -> StackName -> Int -> m RValue
-
 data Definition evalM = Native (evalM Unit) | Canon (Array String)
 
 type Module evalM =
@@ -48,6 +33,8 @@ type Module evalM =
   , stacks :: HashMap StackName RStack }
 emptyModule :: forall m. Module m
 emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty }
+emptyStack :: RStack
+emptyStack = mempty
 newtype RealState = RealState 
   { modules :: HashMap ModuleName (Module RealEval)
   , openModule :: ModuleName
@@ -66,19 +53,39 @@ getOrMakeModule mn = do
       modify_ \(RealState st) -> RealState st { modules = HM.insert mn emptyModule st.modules }
       pure emptyModule
 
-alterModule :: ModuleName -> (Maybe (Module RealEval) -> Maybe (Module RealEval)) -> RealEval Unit
-alterModule mn f = modify_ \(RealState st) -> RealState st { modules = HM.alter f mn st.modules }
+alterModule :: ModuleName -> ( (Module RealEval) -> Maybe (Module RealEval)) -> RealEval Unit
+alterModule mn f = modify_ \(RealState st) -> RealState st { modules = HM.alter (fromMaybe emptyModule >>> f) mn st.modules }
 
 getOrMakeStack :: ModuleName -> StackName -> RealEval RStack
 getOrMakeStack mn sn = do
-  alterModule mn \m -> let
-    stack = 
-    Just $ maybe emptyModule (\RealState st -> RealState st { stacks = HM.stacks }) 
-  m <- getOrMakeModule mn
-  case HM.lookup sn m of
-    Just stack -> pure stack
-    Nothing -> pure emptyStack -- impossible
+  m@{ stacks } <- getOrMakeModule mn
+  let outStack = case HM.lookup sn stacks of
+        Just stack -> stack
+        Nothing -> emptyStack -- impossible
+  alterModule mn (\_ -> pure $ m { stacks = HM.insert sn outStack stacks })
+  pure outStack
 
+alterStack :: ModuleName -> StackName -> (RStack -> Maybe RStack) -> RealEval Unit
+alterStack mn sn f = alterModule mn \m@{ stacks } -> pure $ m { stacks = HM.alter (fromMaybe emptyStack >>> f) sn stacks }
+
+--modify_ \(RealState st) -> RealState st { modules = HM.alter (fromMaybe emptyModule >>> f) mn st.modules }
+
+
+--| Evaluation monad for the langauge
+class (Monad m, MonadEffect m, MonadThrow String m) <= MonadEval m where
+  --| Get a single, raw, space-delimited word from the input, and seek the input forward.
+  nextWordRaw :: m (Maybe String)
+  --| Add a definition, given a module name, definition name, and definition. 
+  record :: ModuleName -> String -> Array String -> m Unit
+  --| Run a continuation in a module.
+  execute :: ModuleName -> Array String -> m Unit
+  --| Add a dependency between modules for name resolution. Puts a module _inside_ another module
+  depend :: ModuleName -> ModuleName -> m Unit
+  --| Push to a named stack in a module. Creates a stack if it doesn't exist.
+  push :: ModuleName -> StackName -> RValue -> m Unit
+  pop :: ModuleName -> StackName -> m RValue
+  --| Peek at a value on a stack
+  peek :: ModuleName -> StackName -> Int -> m RValue
 
 instance monadEvalRealEval :: MonadEval RealEval where
   nextWordRaw :: RealEval (Maybe String)
@@ -86,15 +93,14 @@ instance monadEvalRealEval :: MonadEval RealEval where
     modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
     RealState { source, sourceIx } <- get
     pure $ A.index source sourceIx
-  record :: ModuleName -> String -> Array String -> RealEval Unit
+  record :: ModuleName -> WordName -> Array WordName -> RealEval Unit
   record mn n def = pure unit
   depend :: ModuleName -> ModuleName -> RealEval Unit
-  depend mn mn' = pure unit
+  depend mn mn' = alterModule mn \m -> pure $ m { chain = mn':m.chain }
   push :: ModuleName -> StackName -> RValue -> RealEval Unit
   push mn sn rv = do
-    { stacks } <- getOrMakeStack mn sn
-    --TODO
-    pure unit
+    stack <- getOrMakeStack mn sn
+    alterModule mn \m -> pure $ m { stacks = HM.insert sn (rv:stack) m.stacks }
   pop :: ModuleName -> StackName -> RealEval RValue
   pop mn sn = pure "unit"
   peek :: ModuleName -> StackName -> Int -> RealEval RValue
@@ -103,6 +109,7 @@ instance monadEvalRealEval :: MonadEval RealEval where
   execute mn cont = pure unit--do
 
 --| Run a program's parse-time directives, like MODULE: 
+--| Produce a new program for the second pass.
 firstPass :: forall m. MonadEval m => String -> m String
 firstPass = words >>> run
   where
