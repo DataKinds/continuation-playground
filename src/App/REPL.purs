@@ -19,6 +19,7 @@ import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Uncurried (EffectFn2, runEffectFn2)
+import Halogen (ClassName(..))
 import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
@@ -40,7 +41,7 @@ import Web.UIEvent.KeyboardEvent as KE
 type State = { count :: Int }
 
 data Action
-  = Increment
+  = Mount
   | RawInput IE.InputEvent
   | RawKeyUp KE.KeyboardEvent
   | RunCode String
@@ -50,7 +51,7 @@ component =
   H.mkComponent
     { initialState: \_ -> { count: 0 }
     , render
-    , eval: H.mkEval H.defaultEval { handleAction = handleAction }
+    , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Mount }
     }
 
 -- replOutputElement :: Proxy "replOutputElement"
@@ -61,17 +62,13 @@ replInputElement = H.RefLabel "replInputElement"
 render :: forall cs m. State -> H.ComponentHTML Action cs m
 render state =
   HH.div_
-    [ HH.p_
-        [ HH.text $ "You aaaaa clicked " <> show state.count <> " times" ]
-    , HH.button
-        [ HE.onClick \_ -> Increment ]
-        [ HH.text "Click me" ]
-    , HH.input
+    [ HH.input
         [ HE.onInput (IE.fromEvent >>> unsafePartial fromJust >>> RawInput)
         , HE.onKeyUp RawKeyUp
         , HP.ref replInputElement
+        , HP.class_ (ClassName "repl-input")
         ]
-    , HH.div [ HP.ref replOutputElement ] []
+    , HH.div [ HP.ref replOutputElement, HP.class_ (ClassName "repl-output") ] []
     ]
 
 foreign import _setInnerHTML :: EffectFn2 Element String Unit
@@ -81,7 +78,9 @@ setInnerHTML = runEffectFn2 _setInnerHTML
 
 handleAction :: forall cs o m. MonadEffect m => Action → H.HalogenM State Action cs o m Unit
 handleAction = case _ of
-  Increment -> H.modify_ \st -> st { count = st.count + 1 }
+  Mount -> do
+    handleAction $ RunCode "\\ hello \\ world ..."
+    handleAction $ RunCode "?"
   RawInput ie -> pure unit
   RawKeyUp ke -> case KE.key ke of
     "Enter" -> do
