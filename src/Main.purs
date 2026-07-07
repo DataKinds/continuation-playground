@@ -6,7 +6,7 @@ import Data.Either
 import Data.Maybe
 import Prelude
 
-import App.Button as Button
+import App.REPL as REPL
 import Control.Monad.Error.Class (class MonadThrow, catchError, throwError, try)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Rec.Class (Step(..), tailRecM)
@@ -309,4 +309,4 @@ words = S.split (S.Pattern " ")
 main :: Effect Unit
 main = HA.runHalogenAff do
   body <- HA.awaitBody
-  runUI Button.component unit body
+  runUI REPL.component unit body
