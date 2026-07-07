@@ -28,7 +28,7 @@ import Lang (evaluate)
 import Partial.Unsafe (unsafePartial)
 import Safe.Coerce (coerce)
 import Web.DOM.Document as D
-import Web.DOM.Element (Element, toNode)
+import Web.DOM.Element (Element, setClassName, toNode)
 import Web.DOM.Node (appendChild, textContent)
 import Web.Event.Internal.Types (Event)
 import Web.HTML (window)
@@ -95,18 +95,15 @@ handleAction = case _ of
     doc <- H.liftEffect (window >>= document)
     maybeOutputElem <- H.getRef replOutputElement
     let
-      log s = do
-        printlineElem <- D.createElement "div" (toDocument doc)
-        setInnerHTML printlineElem s
+      appendDivWithContentAndClass cl s = do
+        el <- D.createElement "div" (toDocument doc)
+        setClassName cl el
+        setInnerHTML el s
         case maybeOutputElem of
           Nothing -> pure unit
-          Just outputElem -> appendChild (toNode printlineElem) (toNode outputElem)
-      err e = do
-        errlineElem <- D.createElement "div" (toDocument doc)
-        setInnerHTML errlineElem (show e)
-        case maybeOutputElem of
-          Nothing -> pure unit
-          Just outputElem -> appendChild (toNode errlineElem) (toNode outputElem)
-    liftEffect (log $ "you ran: " <> code)
+          Just outputElem -> appendChild (toNode el) (toNode outputElem)
+      log s = appendDivWithContentAndClass "output-line" s
+      err e = appendDivWithContentAndClass "error-line"  (show e) 
+    liftEffect (appendDivWithContentAndClass "input-line" $ "you ran: " <> code)
     liftEffect $ evaluate err log code
     pure unit
