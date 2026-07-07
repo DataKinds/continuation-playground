@@ -39,14 +39,13 @@ emptyStack :: RStack
 emptyStack = mempty
 
 emptyRealState :: RealState
-emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0, errorHandler: Console.logShow, outputHandler: Console.log }
+emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0, errorHandler: Console.errorShow, outputHandler: Console.log }
 
 throw = error >>> throwError
 throwUnderflow = throw "stack underflow" -- TODO: better errors
 throwEOF after = throw $ "expected word after " <> after <> ", got EOF"
 
-
-nextWordTrimmedOrEOF errMsg = do
+nextWordTrimmedOrThrowEOF errMsg = do
   nw <- nextWordTrimmed
   case nw of
     Nothing -> throwEOF errMsg
@@ -58,8 +57,11 @@ gainKnowledge = do
   l <- map liftEffect <$> getLogger
   recordNative "main" "help" $ do
     l "need help?!"
+  recordNative "main" "..." $ do
+    sn <- dumpOpenStack
+    l $ show sn -- TODO: dump whole stack
   recordNativeSyntax "main" "\\" $ do
-    nw <- nextWordTrimmedOrEOF "backslash"
+    nw <- nextWordTrimmedOrThrowEOF "backslash"
     mn <- getOpenModule
     sn <- getOpenStack
     push mn sn nw
@@ -68,14 +70,14 @@ gainKnowledge = do
   recordNative "main" "enter" $ do
     mn <- getOpenModule
     sn <- getOpenStack
-    rv <- pop mn sn 
+    rv <- pop mn sn
     case rv of
       Nothing -> throwUnderflow
       Just rv' -> enter rv'
 
   recordNativeSyntax "main" "ENTER:" $ do
-    nw <- nextWordTrimmedOrEOF "ENTER:"
-    pure ["\\", nw, "enter"]
+    nw <- nextWordTrimmedOrThrowEOF "ENTER:"
+    pure [ "\\", nw, "enter" ]
 
 --| Load up functions that hook into the interpreter internals
 gainDebugKnowledge :: RealEval Unit
@@ -134,8 +136,8 @@ alterStack :: ModuleName -> StackName -> (RStack -> Maybe RStack) -> RealEval Un
 alterStack mn sn f = alterModule mn \m@{ stacks } -> pure $ m { stacks = HM.alter (fromMaybe emptyStack >>> f) sn stacks }
 
 --| What module should we currently be executing in? TODO: this should be removable
-_getOpenModule' :: RealEval ModuleName
-_getOpenModule' = get <#> \(RealState { openModules }) -> NA.head openModules
+_getOpenModule :: RealEval ModuleName
+_getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
 
 class (MonadEffect m, MonadError Error m) <= MonadSwappableLogger m where
   setErrhandler :: (Error -> Effect Unit) -> m Unit
@@ -149,7 +151,6 @@ instance MonadSwappableLogger RealEval where
   getErrhandler = get <#> \(RealState st) -> st.errorHandler
   getLogger = get <#> \(RealState st) -> st.outputHandler
 
-
 --| Evaluation monad for the langauge
 class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Get a single, raw, space-delimited word from the input, and seek the input forward.
@@ -161,6 +162,7 @@ class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Query the VM for the currently active module or stack.
   getOpenModule :: m ModuleName --| What module should we currently be executing in?
   getOpenStack :: m StackName --| What stack should we be modifying? Note that this is scoped to modules.
+  dumpOpenStack :: m (Array RValue) 
   --| Switch the active module used for execution.
   enter :: ModuleName -> m Unit
   leave :: m Unit
@@ -224,7 +226,11 @@ instance monadEvalRealEval :: MonadEval RealEval where
           Just def -> pure $ Just def
 
   getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
-  getOpenStack = _getOpenModule' >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+  getOpenStack = _getOpenModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+  dumpOpenStack = do
+    mn <- _getOpenModule
+    sn <- getOpenStack
+    getOrMakeStack mn sn
 
   enter :: ModuleName -> RealEval Unit
   enter mn = modify_ \(RealState st) -> RealState st { openModules = NA.cons mn st.openModules }
@@ -243,7 +249,7 @@ instance monadEvalRealEval :: MonadEval RealEval where
     alterModule mn \m -> Just m { openStacks = NA.cons sn m.openStacks }
   outof :: RealEval Unit
   outof = do
-    mn <- _getOpenModule' -- TODO: why can't I just call getOpenModule here???
+    mn <- _getOpenModule -- TODO: why can't I just call getOpenModule here???
     alterModule mn \m@{ openStacks } ->
       let
         { head: _, tail } = NA.uncons openStacks
@@ -316,9 +322,12 @@ evaluate errHandler outputHandler str =
     go _ = do
       notDone <- executeNextWord
       pure $ if notDone then Loop unit else Done unit
-    execAction = setLogger outputHandler *> setErrhandler errHandler *> gainKnowledge *> gainDebugKnowledge *> (tailRecM go unit)
+    execAction = setLogger outputHandler *> setErrhandler errHandler
+      *> gainKnowledge
+      *> gainDebugKnowledge
+      *> (tailRecM go unit)
   in
-    liftEffect $ evalRealState execAction startingState -- TODO: executeNextWord till we can't
+    liftEffect $ evalRealState execAction startingState
 
 words :: String -> Array String
 words = S.split (S.Pattern " ")
