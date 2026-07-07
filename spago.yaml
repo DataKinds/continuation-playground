@@ -1,5 +1,7 @@
 package:
   name: catjamlang
+  bundle:
+    module: Main
   dependencies:
     - console
     - effect

@@ -39,6 +39,8 @@ newtype RealState = RealState
   , openModules :: NonEmptyArray ModuleName
   , source :: Array String
   , sourceIx :: Int
+  , errorHandler :: Error -> Effect Unit
+  , outputHandler :: String -> Effect Unit
   }
 
 derive instance newtypeRealState :: Newtype RealState _
