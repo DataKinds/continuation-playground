@@ -32,6 +32,8 @@ import Halogen.Aff as HA
 import Halogen.VDom.Driver (runUI)
 import Web.DOM.Document (doctype)
 
+type VMError = Error -- TODO: enumerate this
+
 emptyModule :: forall m. Module m
 emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty, openStacks: NA.singleton "main" }
 
@@ -52,11 +54,11 @@ nextWordTrimmedOrThrowEOF errMsg = do
     Just nw' -> pure nw'
 
 --| Load up the standard library.
-gainKnowledge :: forall m. MonadVM m => MonadSwappableLogger m => m Unit
+gainKnowledge :: forall m. MonadVM m => MonadSwappableLogger VMError m => m Unit
 gainKnowledge = do
   l <- map liftEffect <$> getLogger
   define "main" "help" $ Native do
-    l "need help?!"
+    l "need help?!" 
   define "main" "..." $ Native do
     sn <- dumpOpenStack
     l $ show sn -- TODO: dump whole stack
@@ -79,10 +81,23 @@ gainKnowledge = do
     nw <- nextWordTrimmedOrThrowEOF "ENTER:"
     pure [ "\\", nw, "enter" ]
 
+class (MonadEffect m, MonadError e m) <= MonadSwappableLogger e m | m -> e where
+  setErrhandler :: (e -> Effect Unit) -> m Unit
+  setLogger :: (String -> Effect Unit) -> m Unit
+  getErrhandler :: m (e -> Effect Unit)
+  getLogger :: m (String -> Effect Unit)
+
+instance MonadSwappableLogger VMError RealEval where
+  setErrhandler eH = modify_ \(RealState st) -> RealState st { errorHandler = eH }
+  setLogger oH = modify_ \(RealState st) -> RealState st { outputHandler = oH }
+  getErrhandler = get <#> \(RealState st) -> st.errorHandler
+  getLogger = get <#> \(RealState st) -> st.outputHandler
+
 --| Load up functions that hook into the interpreter internals
 gainDebugKnowledge :: RealEval Unit
 gainDebugKnowledge = do
-  l <- map liftEffect <$> getLogger
+  -- l <- (getLogger)
+  -- l <- map liftEffect <$> getLogger
   depend "main" "debug"
   define "debug" "?" $ Native do
     RealState { modules, openModules } <- get
@@ -107,7 +122,8 @@ gainDebugKnowledge = do
           , "within this module (" <> mn <> ") there are " <> show (HM.size stacks) <> " stacks, and " <> sn <> " is active"
           ]
         ]
-    liftEffect <<< l <<< S.joinWith "\n" $ lines
+    -- liftEffect <<< l <<< S.joinWith "\n" $ lines
+    pure unit
 
 --=== Lenses for the module and stack types ===--
 getOrMakeModule :: ModuleName -> RealEval (Module RealEval)
@@ -139,20 +155,14 @@ alterStack mn sn f = alterModule mn \m@{ stacks } -> pure $ m { stacks = HM.alte
 _getOpenModule :: RealEval ModuleName
 _getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
 
-class (MonadEffect m, MonadError Error m) <= MonadSwappableLogger m where
-  setErrhandler :: (Error -> Effect Unit) -> m Unit
-  setLogger :: (String -> Effect Unit) -> m Unit
-  getErrhandler :: m (Error -> Effect Unit)
-  getLogger :: m (String -> Effect Unit)
 
-instance MonadSwappableLogger RealEval where
-  setErrhandler eH = modify_ \(RealState st) -> RealState st { errorHandler = eH }
-  setLogger oH = modify_ \(RealState st) -> RealState st { outputHandler = oH }
-  getErrhandler = get <#> \(RealState st) -> st.errorHandler
-  getLogger = get <#> \(RealState st) -> st.outputHandler
+-- withErrhandler :: forall e m n a b. MonadSwappableLogger e m => MonadThrow e n => (a -> n b) -> m (n b)
+-- withErrhandler action = do
+--   errHandler <- getErrhandler
+--   catchError action errHandler
 
 --| Things that read from the VM state without changing it
-class MonadThrow Error m <= MonadReadVM m where
+class MonadThrow VMError m <= MonadReadVM m where
   --| What module is active for execution? 
   getOpenModule :: m ModuleName
   --| What stack are we actively executing on?
@@ -212,7 +222,7 @@ instance MonadVMTape RealEval where
     modify_ \(RealState st@{ source, sourceIx }) -> RealState st { source = fromMaybe source $ A.insertAt sourceIx w source }
 
 --| Evaluation monad for the langauge
-class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadThrow Error m) <= MonadVM m where
+class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadSwappableLogger VMError m, MonadThrow VMError m) <= MonadVM m where
   --| Add a definition, given a module name, definition name, and definition. 
   define :: ModuleName -> WordName -> Definition m -> m Unit
   --| Switch the active module used for execution.
@@ -299,7 +309,7 @@ nextWordTrimmed = do
       | otherwise -> pure $ Just nw
 
 --| Execute the next word ready to be processed by the VM and seek forward. Returns false if out of input.
-executeNextWord :: forall m. MonadVM m => MonadSwappableLogger m => m Boolean
+executeNextWord :: forall m. MonadVM m => m Boolean
 executeNextWord = do
   maybeNw <- nextWordTrimmed
   errorHandler <- map liftEffect <$> getErrhandler
@@ -308,17 +318,17 @@ executeNextWord = do
     Just nw -> catchError (execute nw) errorHandler *> pure true
 
 --| Initialize a language evaluation monad
-initialVMAction :: forall m. MonadVM m => MonadSwappableLogger m => (Error → Effect Unit) → (String → Effect Unit) → m Unit
+initialVMAction :: forall m. MonadVM m => (VMError → Effect Unit) → (String → Effect Unit) → m Unit
 initialVMAction errHandler outputHandler =
   setLogger outputHandler
     *> setErrhandler errHandler
     *> gainKnowledge
 
-initialDebugVMAction :: (Error → Effect Unit) → (String → Effect Unit) → RealEval Unit
+initialDebugVMAction :: (VMError → Effect Unit) → (String → Effect Unit) → RealEval Unit
 initialDebugVMAction errHandler outputHandler = initialVMAction errHandler outputHandler *> gainDebugKnowledge
 
 --| Execute some code within the evaluation monad
-vmAction :: forall m. MonadVM m => MonadSwappableLogger m => MonadRec m => String -> m Unit
+vmAction :: forall m. MonadVM m => MonadRec m => String -> m Unit
 vmAction input = let 
     go _ = do
       notDone <- executeNextWord
@@ -330,7 +340,7 @@ vmAction input = let
 execRealState :: forall a. RealEval a -> RealState -> Effect Unit
 execRealState action starting@(RealState { errorHandler }) =
   let
-    throwable :: ExceptT Error Effect a
+    throwable :: ExceptT VMError Effect a
     throwable = evalStateT action starting
   in
     do
