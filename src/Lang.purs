@@ -151,18 +151,57 @@ instance MonadSwappableLogger RealEval where
   getErrhandler = get <#> \(RealState st) -> st.errorHandler
   getLogger = get <#> \(RealState st) -> st.outputHandler
 
+--| Things that read from the VM state without changing it
+class MonadThrow Error m <= MonadReadVM m where
+  --| What module is active for execution? 
+  getOpenModule :: m ModuleName
+  --| What stack are we actively executing on?
+  getOpenStack :: m StackName 
+  --| Grab a runtime instance of the open stack
+  dumpOpenStack :: m RStack 
+  --| Peek at a value on a stack
+  peek :: ModuleName -> StackName -> Int -> m (Maybe RValue)
+  --| Look up a name in a module chain
+  lookup :: ModuleName -> WordName -> m (Maybe (Definition m))
+
+
+instance MonadReadVM RealEval where
+  getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
+  getOpenStack = _getOpenModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+  dumpOpenStack = do
+    mn <- _getOpenModule
+    sn <- getOpenStack
+    getOrMakeStack mn sn
+  peek mn sn depth = do
+    stack <- getOrMakeStack mn sn
+    pure $ A.index stack depth
+  lookup mn name = do
+    m@{ defs, chain } <- getOrMakeModule mn
+    case HM.lookup name defs of
+      Just def -> pure $ Just def
+      -- First layer name resolution (in the direct module) failed:
+      -- let's do a BFS of the inheritance tree to try to resolve the name in a parent context
+      -- Note that this method can diverge, there is no static guarantee at the moment that the dependency graph is acyclic.
+      Nothing -> rec chain
+    where
+    rec :: Array ModuleName -> RealEval (Maybe (Definition RealEval))
+    rec mns = case A.uncons mns of
+      Nothing -> pure Nothing
+      Just { head, tail } -> do
+        maybeDef <- lookup head name
+        case maybeDef of
+          Nothing -> rec tail
+          Just def -> pure $ Just def
+
+
 --| Evaluation monad for the langauge
-class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
+class (MonadReadVM m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Get a single, raw, space-delimited word from the input, and seek the input forward.
   nextWordRaw :: m (Maybe String)
   --| Add a definition, given a module name, definition name, and definition. 
   record :: ModuleName -> String -> Array String -> m Unit
   recordNative :: ModuleName -> String -> m Unit -> m Unit
   recordNativeSyntax :: ModuleName -> String -> m (Array WordName) -> m Unit
-  --| Query the VM for the currently active module or stack.
-  getOpenModule :: m ModuleName --| What module should we currently be executing in?
-  getOpenStack :: m StackName --| What stack should we be modifying? Note that this is scoped to modules.
-  dumpOpenStack :: m (Array RValue) 
   --| Switch the active module used for execution.
   enter :: ModuleName -> m Unit
   leave :: m Unit
@@ -176,10 +215,6 @@ class (Monad m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   --| Push to a named stack in the current module. Creates a stack if it doesn't exist.
   push :: ModuleName -> StackName -> RValue -> m Unit
   pop :: ModuleName -> StackName -> m (Maybe RValue)
-  --| Peek at a value on a stack
-  peek :: ModuleName -> StackName -> Int -> m RValue
-  --| Look up a name in a module chain
-  lookup :: ModuleName -> WordName -> m (Maybe (Definition m))
 
 instance monadEvalRealEval :: MonadEval RealEval where
   nextWordRaw :: RealEval (Maybe String)
@@ -204,34 +239,6 @@ instance monadEvalRealEval :: MonadEval RealEval where
       Just { head: x, tail: xs } -> do
         alterStack mn sn (const (Just xs))
         pure $ Just x
-  peek :: ModuleName -> StackName -> Int -> RealEval RValue
-  peek mn sn depth = pure "ok"
-  lookup :: ModuleName -> WordName -> RealEval (Maybe (Definition RealEval))
-  lookup mn name = do
-    m@{ defs, chain } <- getOrMakeModule mn
-    case HM.lookup name defs of
-      Just def -> pure $ Just def
-      -- First layer name resolution (in the direct module) failed:
-      -- let's do a BFS of the inheritance tree to try to resolve the name in a parent context
-      -- Note that this method can diverge, there is no static guarantee at the moment that the dependency graph is acyclic.
-      Nothing -> rec chain
-    where
-    rec :: Array ModuleName -> RealEval (Maybe (Definition RealEval))
-    rec mns = case A.uncons mns of
-      Nothing -> pure Nothing
-      Just { head, tail } -> do
-        maybeDef <- lookup head name
-        case maybeDef of
-          Nothing -> rec tail
-          Just def -> pure $ Just def
-
-  getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
-  getOpenStack = _getOpenModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
-  dumpOpenStack = do
-    mn <- _getOpenModule
-    sn <- getOpenStack
-    getOrMakeStack mn sn
-
   enter :: ModuleName -> RealEval Unit
   enter mn = modify_ \(RealState st) -> RealState st { openModules = NA.cons mn st.openModules }
   leave :: RealEval Unit
