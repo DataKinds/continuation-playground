@@ -33,7 +33,7 @@ import Web.DOM.Document as D
 import Web.DOM.Element (Element, setClassName, toNode)
 import Web.DOM.Node (appendChild, textContent)
 import Web.Event.Internal.Types (Event)
-import Web.HTML (window)
+import Web.HTML (HTMLDocument, window)
 import Web.HTML.HTMLDocument (toDocument)
 import Web.HTML.HTMLInputElement (value, fromElement)
 import Web.HTML.Window (document)
@@ -80,11 +80,25 @@ foreign import _setInnerHTML :: EffectFn2 Element String Unit
 setInnerHTML ∷ Element → String → Effect Unit
 setInnerHTML = runEffectFn2 _setInnerHTML
 
-appendDivWithContentAndClass doc outputElem cl s = do
-  el <- D.createElement "div" (toDocument doc)
-  setClassName cl el
-  setInnerHTML el s
-  appendChild (toNode el) (toNode outputElem)
+appendOutput :: HTMLDocument -> Element -> String -> Effect Unit
+appendOutput doc outputElem rawOutput = do
+  let d = toDocument doc
+  detailsEl <- D.createElement "details" d
+  summaryEl <- D.createElement "summary" d
+  pEl <- D.createElement "p" d
+  setInnerHTML pEl rawOutput
+  setInnerHTML summaryEl "Output"
+  appendChild (toNode pEl) (toNode detailsEl) 
+  appendChild (toNode summaryEl) (toNode detailsEl) 
+  appendChild (toNode detailsEl) (toNode outputElem) 
+
+appendInputReadback :: HTMLDocument -> Element -> String -> Effect Unit
+appendInputReadback doc outputElem rawInput = do
+  let d = toDocument doc
+  readbackEl <- D.createElement "div" d
+  setClassName "input-readback" readbackEl
+  setInnerHTML readbackEl ("You duly executed: " <> rawInput)
+  appendChild (toNode readbackEl) (toNode outputElem) 
 
 liftVM :: forall a s o m. MonadAff m => RealEval a -> H.HalogenM State Action s o m Unit
 liftVM vmA = do
@@ -101,9 +115,11 @@ handleAction action = do
   case [ maybeOutputElem, maybeInputElem ] of
     [ Just outputElem, Just inputElem ] ->
       let
-        appendElem = appendDivWithContentAndClass doc outputElem
-        log s = appendElem "output-line" s
-        err e = appendElem "error-line" (show e)
+        log s = do
+          traceM "LOGGING"
+          traceM s
+          appendOutput doc outputElem s
+        err e = appendOutput doc outputElem (show e)
       in
         case action of
           Mount -> do
@@ -120,6 +136,6 @@ handleAction action = do
           StandardOutput rawHtml -> pure unit
           StandardError rawHtml -> pure unit
           RunCode code -> do
-            liftEffect (appendElem "input-readback" $ "you ran: " <> code)
-            liftVM (vmAction code) 
+            liftEffect (appendInputReadback doc outputElem code)
+            liftVM (vmAction code)
     _ -> pure unit
