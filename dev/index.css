@@ -1,18 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Libertinus+Mono&family=Major+Mono+Display&family=Xanh+Mono:ital@0;1&family=Yuyu+Short&display=swap');
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
 .repl-output {
-    white-space: pre;
+  white-space: pre;
 }
 
 .repl-input {
-    width: 100%;
-    margin-bottom: 16px;
+  width: 100%;
+  margin-bottom: 16px;
 }
 
-.repl-output .input-line {
-  border-top: 1px dashed grey;
+.repl-output .input-readback {
+  border-top: 1px dotted grey;
   margin-top: 8px;
   padding-top: 8px;
+}
+
+.repl-output {
+  font-family: "Libertinus Mono", monospace;
+  font-size: small;
+  font-weight: 400;
+  font-style: normal;
 }

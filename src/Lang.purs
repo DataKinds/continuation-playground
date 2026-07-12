@@ -354,20 +354,3 @@ execVMAff action starting@(RealState { errorHandler }) =
           liftEffect $ errorHandler err
           pure starting
 
---| Given a string that contains a program, evaluate the program entirely. 
---| Takes a function for output handling and error handling.
--- evaluate :: forall m. MonadEffect m => (Error -> Effect Unit) -> (String -> Effect Unit) -> String -> m Unit
--- evaluate errHandler outputHandler str =
---   let
---     startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
---     go _ = do
---       notDone <- executeNextWord
---       pure $ if notDone then Loop unit else Done unit
---     execAction = setLogger outputHandler *> setErrhandler errHandler
---       *> gainKnowledge
---       *> gainDebugKnowledge
---       *> (tailRecM go unit)
---   in
---     liftEffect $ evalRealState execAction startingState
-
-

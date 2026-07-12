@@ -120,6 +120,6 @@ handleAction action = do
           StandardOutput rawHtml -> pure unit
           StandardError rawHtml -> pure unit
           RunCode code -> do
-            liftEffect (appendElem "input-line" $ "you ran: " <> code)
+            liftEffect (appendElem "input-readback" $ "you ran: " <> code)
             liftVM (vmAction code) 
     _ -> pure unit
