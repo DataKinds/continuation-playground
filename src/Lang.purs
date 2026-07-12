@@ -25,6 +25,8 @@ import Data.Traversable (sequence, sequence_)
 import Data.Tuple (Tuple(..))
 import Debug (traceM)
 import Effect (Effect)
+import Effect.Aff (Aff)
+import Effect.Aff.Class (class MonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Console as Console
 import Effect.Exception (Error, error)
@@ -97,7 +99,7 @@ instance MonadSwappableLogger VMError RealEval where
 gainDebugKnowledge :: RealEval Unit
 gainDebugKnowledge = do
   -- l <- (getLogger)
-  -- l <- map liftEffect <$> getLogger
+  l <- map liftEffect <$> getLogger
   depend "main" "debug"
   define "debug" "?" $ Native do
     RealState { modules, openModules } <- get
@@ -122,7 +124,7 @@ gainDebugKnowledge = do
           , "within this module (" <> mn <> ") there are " <> show (HM.size stacks) <> " stacks, and " <> sn <> " is active"
           ]
         ]
-    -- liftEffect <<< l <<< S.joinWith "\n" $ lines
+    liftEffect <<< l <<< S.joinWith "\n" $ lines
     pure unit
 
 --=== Lenses for the module and stack types ===--
@@ -222,7 +224,7 @@ instance MonadVMTape RealEval where
     modify_ \(RealState st@{ source, sourceIx }) -> RealState st { source = fromMaybe source $ A.insertAt sourceIx w source }
 
 --| Evaluation monad for the langauge
-class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadSwappableLogger VMError m, MonadThrow VMError m) <= MonadVM m where
+class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadAff m, MonadSwappableLogger VMError m, MonadThrow VMError m) <= MonadVM m where
   --| Add a definition, given a module name, definition name, and definition. 
   define :: ModuleName -> WordName -> Definition m -> m Unit
   --| Switch the active module used for execution.
@@ -298,6 +300,7 @@ instance monadEvalRealEval :: MonadVM RealEval where
       Just (CanonSyntax defmacro) ->
         pure unit -- TODO
 
+
 --| Like popRawWord, but skips whitespace if you don't care.
 nextWordTrimmed :: forall m. MonadVM m => m (Maybe String)
 nextWordTrimmed = do
@@ -336,18 +339,20 @@ vmAction input = let
     execAction = tailRecM go unit
   in loadRaw input *> execAction
 
---| Low level function to carry out an action specified by RealEval.
-execRealState :: forall a. RealEval a -> RealState -> Effect Unit
-execRealState action starting@(RealState { errorHandler }) =
+--| Execute our implementation of MonadVM in the Aff monad, returning the intermediate state of the interpreter after execution.
+execVMAff :: forall a. RealEval a -> RealState -> Aff RealState
+execVMAff action starting@(RealState { errorHandler }) =
   let
-    throwable :: ExceptT VMError Effect a
-    throwable = evalStateT action starting
+    throwable :: ExceptT VMError Aff RealState
+    throwable = execStateT action starting
   in
     do
       out <- runExceptT throwable
       case out of
-        Right x -> pure unit
-        Left err -> errorHandler err
+        Right newState -> pure newState
+        Left err -> do
+          liftEffect $ errorHandler err
+          pure starting
 
 --| Given a string that contains a program, evaluate the program entirely. 
 --| Takes a function for output handling and error handling.

@@ -10,6 +10,7 @@ import Data.HashMap (HashMap)
 import Data.Newtype (class Newtype)
 import Data.String (joinWith)
 import Effect (Effect)
+import Effect.Aff (Aff)
 import Effect.Exception (Error)
 
 
@@ -45,5 +46,5 @@ newtype RealState = RealState
 
 derive instance newtypeRealState :: Newtype RealState _
 
-type RealEval = StateT RealState (ExceptT Error Effect) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
+type RealEval = StateT RealState (ExceptT Error Aff) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
 

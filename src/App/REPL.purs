@@ -7,9 +7,9 @@ module App.REPL
   , replInputElement
   , replOutputElement
   , setInnerHTML
-  )
-  where
+  ) where
 
+import Common
 import Data.Maybe
 import Prelude
 import Type.Proxy
@@ -25,7 +25,7 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Lang (initialDebugVMAction, vmAction)
+import Lang (execVMAff, initialDebugVMAction, vmAction)
 import Lang as L
 import Partial.Unsafe (unsafePartial)
 import Safe.Coerce (coerce)
@@ -40,7 +40,9 @@ import Web.HTML.Window (document)
 import Web.UIEvent.InputEvent as IE
 import Web.UIEvent.KeyboardEvent as KE
 
-type State = { count :: Int }
+type State = { vmState :: RealState }
+
+initialState = \_ -> { vmState: L.emptyRealState }
 
 data Action
   = Mount
@@ -50,16 +52,14 @@ data Action
   | StandardOutput String
   | StandardError String
 
-component :: forall q i o m. MonadEffect m => L.MonadVM m => MonadRec m => H.Component q i o m
+component :: forall q i o m. MonadAff m => H.Component q i o m
 component =
   H.mkComponent
-    { initialState: \_ -> { count: 0 }
+    { initialState
     , render
     , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Mount }
     }
 
--- replOutputElement :: Proxy "replOutputElement"
--- replOutputElement = Proxy
 replOutputElement = H.RefLabel "replOutputElement"
 replInputElement = H.RefLabel "replInputElement"
 
@@ -86,45 +86,40 @@ appendDivWithContentAndClass doc outputElem cl s = do
   setInnerHTML el s
   appendChild (toNode el) (toNode outputElem)
 
+liftVM :: forall a s o m. MonadAff m => RealEval a -> H.HalogenM State Action s o m Unit
+liftVM vmA = do
+  { vmState } <- H.get
+  newVmState <- H.liftAff $ execVMAff vmA vmState
+  H.modify_ _ { vmState = newVmState }
 
-handleAction :: forall cs o m. MonadEffect m => L.MonadVM m => MonadRec m => Action → H.HalogenM State Action cs o m Unit
-handleAction = case _ of
-  Mount -> do
-  -- Set up the VM
-    doc <- H.liftEffect (window >>= document)
-    maybeOutputElem <- H.getRef replOutputElement
-    case maybeOutputElem of
-      Nothing -> pure unit
-      Just outputElem -> do
-        let
-            appendElem = appendDivWithContentAndClass doc outputElem
-            log s = appendElem "output-line" s
-            -- err e = appendElem "error-line"  (show e) 
-        -- initialDebugVMAction err log TODO
-        handleAction $ RunCode "\\ hello \\ world ..."
-        handleAction $ RunCode "?"
-  RawInput ie -> pure unit
-  RawKeyUp ke -> case KE.key ke of
-    "Enter" -> do
-      maybeInputElem <- H.getRef replInputElement
-      case maybeInputElem of
-        Nothing -> pure unit
-        Just inputElem -> do
-          code <- liftEffect $ value (unsafePartial fromJust <<< fromElement $ inputElem)
-          handleAction $ RunCode code
-    _ -> traceM ke
-  StandardOutput rawHtml -> pure unit
-  StandardError rawHtml -> pure unit
-  RunCode code -> do
-    doc <- H.liftEffect (window >>= document)
-    maybeOutputElem <- H.getRef replOutputElement
-    case maybeOutputElem of
-      Nothing -> pure unit
-      Just outputElem -> do
-        let
-          appendElem = appendDivWithContentAndClass doc outputElem
-          log s = appendElem "output-line" s
-          err e = appendElem "error-line"  (e) 
-        liftEffect (appendElem "input-line" $ "you ran: " <> code)
-        H.lift $ vmAction code
-    pure unit
+handleAction :: forall s o m. MonadAff m => Action → H.HalogenM State Action s o m Unit
+handleAction action = do
+  doc <- H.liftEffect (window >>= document)
+  maybeOutputElem <- H.getRef replOutputElement
+  maybeInputElem <- H.getRef replInputElement
+
+  case [ maybeOutputElem, maybeInputElem ] of
+    [ Just outputElem, Just inputElem ] ->
+      let
+        appendElem = appendDivWithContentAndClass doc outputElem
+        log s = appendElem "output-line" s
+        err e = appendElem "error-line" (show e)
+      in
+        case action of
+          Mount -> do
+            -- Set up the VM
+            liftVM $ initialDebugVMAction err log
+            handleAction $ RunCode "\\ hello \\ world ..."
+            handleAction $ RunCode "?"
+          RawInput ie -> pure unit
+          RawKeyUp ke -> case KE.key ke of
+            "Enter" -> do
+              code <- liftEffect $ value (unsafePartial fromJust <<< fromElement $ inputElem)
+              handleAction $ RunCode code
+            _ -> traceM ke
+          StandardOutput rawHtml -> pure unit
+          StandardError rawHtml -> pure unit
+          RunCode code -> do
+            liftEffect (appendElem "input-line" $ "you ran: " <> code)
+            liftVM (vmAction code) 
+    _ -> pure unit
