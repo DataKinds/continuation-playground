@@ -8,7 +8,7 @@ import Prelude
 
 import Control.Monad.Error.Class (class MonadError, class MonadThrow, catchError, throwError, try)
 import Control.Monad.Except (ExceptT, runExceptT)
-import Control.Monad.Rec.Class (Step(..), tailRecM)
+import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Data.Array ((:))
 import Data.Array as A
 import Data.Array.NonEmpty as NA
@@ -52,22 +52,22 @@ nextWordTrimmedOrThrowEOF errMsg = do
     Just nw' -> pure nw'
 
 --| Load up the standard library.
-gainKnowledge :: forall m. MonadEval m => MonadSwappableLogger m => m Unit
+gainKnowledge :: forall m. MonadVM m => MonadSwappableLogger m => m Unit
 gainKnowledge = do
   l <- map liftEffect <$> getLogger
-  recordNative "main" "help" $ do
+  define "main" "help" $ Native do
     l "need help?!"
-  recordNative "main" "..." $ do
+  define "main" "..." $ Native do
     sn <- dumpOpenStack
     l $ show sn -- TODO: dump whole stack
-  recordNativeSyntax "main" "\\" $ do
+  define "main" "\\" $ NativeSyntax do
     nw <- nextWordTrimmedOrThrowEOF "backslash"
     mn <- getOpenModule
     sn <- getOpenStack
     push mn sn nw
     pure []
 
-  recordNative "main" "enter" $ do
+  define "main" "enter" $ Native do
     mn <- getOpenModule
     sn <- getOpenStack
     rv <- pop mn sn
@@ -75,7 +75,7 @@ gainKnowledge = do
       Nothing -> throwUnderflow
       Just rv' -> enter rv'
 
-  recordNativeSyntax "main" "ENTER:" $ do
+  define "main" "ENTER:" $ NativeSyntax do
     nw <- nextWordTrimmedOrThrowEOF "ENTER:"
     pure [ "\\", nw, "enter" ]
 
@@ -84,7 +84,7 @@ gainDebugKnowledge :: RealEval Unit
 gainDebugKnowledge = do
   l <- map liftEffect <$> getLogger
   depend "main" "debug"
-  recordNative "debug" "?" $ do
+  define "debug" "?" $ Native do
     RealState { modules, openModules } <- get
     mn <- getOpenModule
     sn <- getOpenStack
@@ -156,14 +156,13 @@ class MonadThrow Error m <= MonadReadVM m where
   --| What module is active for execution? 
   getOpenModule :: m ModuleName
   --| What stack are we actively executing on?
-  getOpenStack :: m StackName 
+  getOpenStack :: m StackName
   --| Grab a runtime instance of the open stack
-  dumpOpenStack :: m RStack 
+  dumpOpenStack :: m RStack
   --| Peek at a value on a stack
   peek :: ModuleName -> StackName -> Int -> m (Maybe RValue)
   --| Look up a name in a module chain
   lookup :: ModuleName -> WordName -> m (Maybe (Definition m))
-
 
 instance MonadReadVM RealEval where
   getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
@@ -193,15 +192,29 @@ instance MonadReadVM RealEval where
           Nothing -> rec tail
           Just def -> pure $ Just def
 
+--| Handling the input tape of words to be executed
+class Monad m <= MonadVMTape m where
+  loadRaw :: String -> m Unit
+  --| Pop a single, raw, space-delimited word from the input
+  popRawWord :: m (Maybe String)
+  --| Push a single, raw, space-delimited word back to the input
+  pushRawWord :: String -> m Unit
+
+instance MonadVMTape RealEval where
+  loadRaw raw = 
+    modify_ \(RealState st) -> RealState st { source = words raw, sourceIx = 0 }
+    where words = S.split (S.Pattern " ")
+  popRawWord = do
+    RealState { source, sourceIx } <- get
+    modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
+    pure $ A.index source sourceIx
+  pushRawWord w =
+    modify_ \(RealState st@{ source, sourceIx }) -> RealState st { source = fromMaybe source $ A.insertAt sourceIx w source }
 
 --| Evaluation monad for the langauge
-class (MonadReadVM m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
-  --| Get a single, raw, space-delimited word from the input, and seek the input forward.
-  nextWordRaw :: m (Maybe String)
+class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadThrow Error m) <= MonadVM m where
   --| Add a definition, given a module name, definition name, and definition. 
-  record :: ModuleName -> String -> Array String -> m Unit
-  recordNative :: ModuleName -> String -> m Unit -> m Unit
-  recordNativeSyntax :: ModuleName -> String -> m (Array WordName) -> m Unit
+  define :: ModuleName -> WordName -> Definition m -> m Unit
   --| Switch the active module used for execution.
   enter :: ModuleName -> m Unit
   leave :: m Unit
@@ -216,22 +229,13 @@ class (MonadReadVM m, MonadEffect m, MonadThrow Error m) <= MonadEval m where
   push :: ModuleName -> StackName -> RValue -> m Unit
   pop :: ModuleName -> StackName -> m (Maybe RValue)
 
-instance monadEvalRealEval :: MonadEval RealEval where
-  nextWordRaw :: RealEval (Maybe String)
-  nextWordRaw = do
-    RealState { source, sourceIx } <- get
-    modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
-    pure $ A.index source sourceIx
-  record :: ModuleName -> WordName -> Array WordName -> RealEval Unit
-  record mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (Canon def) m.defs }
-  recordNative :: ModuleName -> WordName -> RealEval Unit -> RealEval Unit
-  recordNative mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (Native def) m.defs }
-  recordNativeSyntax mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name (NativeSyntax def) m.defs }
-  depend :: ModuleName -> ModuleName -> RealEval Unit
+instance monadEvalRealEval :: MonadVM RealEval where
+  define mn name def = alterModule mn \m -> pure $ m { defs = HM.insert name def m.defs }
+
   depend mn mn' = alterModule mn \m -> pure $ m { chain = mn' : m.chain }
-  push :: ModuleName -> StackName -> RValue -> RealEval Unit
+
   push mn sn rv = alterStack mn sn (\stack -> pure $ rv : stack)
-  pop :: ModuleName -> StackName -> RealEval (Maybe RValue)
+
   pop mn sn = do
     stack <- getOrMakeStack mn sn
     case A.uncons stack of
@@ -239,9 +243,9 @@ instance monadEvalRealEval :: MonadEval RealEval where
       Just { head: x, tail: xs } -> do
         alterStack mn sn (const (Just xs))
         pure $ Just x
-  enter :: ModuleName -> RealEval Unit
+
   enter mn = modify_ \(RealState st) -> RealState st { openModules = NA.cons mn st.openModules }
-  leave :: RealEval Unit
+
   leave = do
     RealState { openModules } <- get
     let
@@ -250,11 +254,11 @@ instance monadEvalRealEval :: MonadEval RealEval where
     case maybeNewModules of
       Nothing -> pure unit -- tried to `leave` the final module, just no-op
       Just newModules -> modify_ \(RealState st) -> RealState st { openModules = newModules }
-  into :: StackName -> RealEval Unit
+
   into sn = do
     mn <- getOpenModule
     alterModule mn \m -> Just m { openStacks = NA.cons sn m.openStacks }
-  outof :: RealEval Unit
+
   outof = do
     mn <- _getOpenModule -- TODO: why can't I just call getOpenModule here???
     alterModule mn \m@{ openStacks } ->
@@ -265,7 +269,7 @@ instance monadEvalRealEval :: MonadEval RealEval where
         case maybeNewStacks of
           Nothing -> Just m -- tried to `leave` the final module, just no-op
           Just newStacks -> Just m { openStacks = newStacks }
-  execute :: WordName -> RealEval Unit
+
   execute cont = do
     mn <- getOpenModule
     maybeDef <- lookup mn cont
@@ -279,15 +283,15 @@ instance monadEvalRealEval :: MonadEval RealEval where
         expansion <- fmacro
         -- traceM $ "got an expansion"
         -- traceM expansion
-        _ <- sequence $ map execute expansion -- TODO: this breaks in cases with nested expansions
+        _ <- sequence $ map pushRawWord expansion
         pure unit
       Just (CanonSyntax defmacro) ->
         pure unit -- TODO
 
---| Like nextWordRaw, but skips whitespace if you don't care.
-nextWordTrimmed :: forall m. MonadEval m => m (Maybe String)
+--| Like popRawWord, but skips whitespace if you don't care.
+nextWordTrimmed :: forall m. MonadVM m => m (Maybe String)
 nextWordTrimmed = do
-  maybeNw <- nextWordRaw
+  maybeNw <- popRawWord
   case maybeNw of
     Nothing -> pure Nothing
     Just nw
@@ -295,21 +299,36 @@ nextWordTrimmed = do
       | otherwise -> pure $ Just nw
 
 --| Execute the next word ready to be processed by the VM and seek forward. Returns false if out of input.
---| Follows two passes: if the word is a macro, it is executed immediately and may consume more words.
---| If the word is a not a macro, execute its definition.
-executeNextWord :: forall m. MonadEval m => MonadSwappableLogger m => m Boolean
+executeNextWord :: forall m. MonadVM m => MonadSwappableLogger m => m Boolean
 executeNextWord = do
   maybeNw <- nextWordTrimmed
   errorHandler <- map liftEffect <$> getErrhandler
   case maybeNw of
     Nothing -> pure false
-    Just nw
-      | trim nw == "" -> executeNextWord -- just whitespace, keep scanning
-      | otherwise -> catchError (execute nw) errorHandler *> pure true
+    Just nw -> catchError (execute nw) errorHandler *> pure true
+
+--| Initialize a language evaluation monad
+initialVMAction :: forall m. MonadVM m => MonadSwappableLogger m => (Error → Effect Unit) → (String → Effect Unit) → m Unit
+initialVMAction errHandler outputHandler =
+  setLogger outputHandler
+    *> setErrhandler errHandler
+    *> gainKnowledge
+
+initialDebugVMAction :: (Error → Effect Unit) → (String → Effect Unit) → RealEval Unit
+initialDebugVMAction errHandler outputHandler = initialVMAction errHandler outputHandler *> gainDebugKnowledge
+
+--| Execute some code within the evaluation monad
+vmAction :: forall m. MonadVM m => MonadSwappableLogger m => MonadRec m => String -> m Unit
+vmAction input = let 
+    go _ = do
+      notDone <- executeNextWord
+      pure $ if notDone then Loop unit else Done unit
+    execAction = tailRecM go unit
+  in loadRaw input *> execAction
 
 --| Low level function to carry out an action specified by RealEval.
-evalRealState :: forall a. RealEval a -> RealState -> Effect Unit
-evalRealState action starting@(RealState { errorHandler }) =
+execRealState :: forall a. RealEval a -> RealState -> Effect Unit
+execRealState action starting@(RealState { errorHandler }) =
   let
     throwable :: ExceptT Error Effect a
     throwable = evalStateT action starting
@@ -322,20 +341,18 @@ evalRealState action starting@(RealState { errorHandler }) =
 
 --| Given a string that contains a program, evaluate the program entirely. 
 --| Takes a function for output handling and error handling.
-evaluate :: forall a b m. MonadEffect m => (Error -> Effect Unit) -> (String -> Effect Unit) -> String -> m Unit
-evaluate errHandler outputHandler str =
-  let
-    startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
-    go _ = do
-      notDone <- executeNextWord
-      pure $ if notDone then Loop unit else Done unit
-    execAction = setLogger outputHandler *> setErrhandler errHandler
-      *> gainKnowledge
-      *> gainDebugKnowledge
-      *> (tailRecM go unit)
-  in
-    liftEffect $ evalRealState execAction startingState
+-- evaluate :: forall m. MonadEffect m => (Error -> Effect Unit) -> (String -> Effect Unit) -> String -> m Unit
+-- evaluate errHandler outputHandler str =
+--   let
+--     startingState = RealState <<< _ { source = words str } $ unwrap emptyRealState
+--     go _ = do
+--       notDone <- executeNextWord
+--       pure $ if notDone then Loop unit else Done unit
+--     execAction = setLogger outputHandler *> setErrhandler errHandler
+--       *> gainKnowledge
+--       *> gainDebugKnowledge
+--       *> (tailRecM go unit)
+--   in
+--     liftEffect $ evalRealState execAction startingState
 
-words :: String -> Array String
-words = S.split (S.Pattern " ")
 
