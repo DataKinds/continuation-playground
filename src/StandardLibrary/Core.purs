@@ -48,7 +48,7 @@ gainKnowledge = do
     pure [ "\\", nw, "enter" ]
   L.define "core" "leave" $ C.Native L.leave
 
-  --| Move data across stack and module boundaries
+  --| Push and pull data across stack and module boundaries
   L.define "core" "kiss" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
@@ -60,3 +60,14 @@ gainKnowledge = do
     mn' <- L.nextWordTrimmedOrThrowEOF "kiss:"
     sn' <- L.nextWordTrimmedOrThrowEOF "kiss:"
     pure [ "\\", mn', "\\", sn', "kiss" ]
+  L.define "core" "suck" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    sn' <- L.popWithUnderflow mn sn
+    mn' <- L.popWithUnderflow mn sn
+    rv <- L.popWithUnderflow mn' sn'
+    L.push mn sn rv
+  L.define "core" "suck:" $ C.NativeSyntax do
+    mn' <- L.nextWordTrimmedOrThrowEOF "suck:"
+    sn' <- L.nextWordTrimmedOrThrowEOF "suck:"
+    pure [ "\\", mn', "\\", sn', "suck" ]

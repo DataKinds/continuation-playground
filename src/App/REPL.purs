@@ -135,7 +135,7 @@ handleAction action = do
           StandardError rawHtml -> pure unit
           RunCode code -> do
             Tuple readbackEl outputGroupEl <- liftEffect (appendOutputGroup doc outputElem)
-            liftEffect $ setInnerHTML readbackEl ("You duly executed: " <> code)
+            liftEffect $ setInnerHTML readbackEl ("💞💖💕  " <> code)
             let
               groupLog s = do
                 traceM $ "Got output from language:" <> s 

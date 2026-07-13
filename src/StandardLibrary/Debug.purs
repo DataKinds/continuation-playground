@@ -16,6 +16,8 @@ import Lang as L
 gainDebugKnowledge :: C.RealEval Unit
 gainDebugKnowledge = do
   L.depend "main" "debug"
+  --| What names are currently accessible?
+  -- L.define "debug" "dir"
   L.define "debug" "?" $ C.Native do
     C.RealState { modules, openModules } <- get
     l <- map liftEffect <$> L.getLogger

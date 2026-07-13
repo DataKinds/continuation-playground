@@ -36,7 +36,7 @@ import Web.DOM.Document (doctype)
 
 
 emptyModule :: forall m. Module m
-emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty, openStacks: NA.singleton "main" }
+emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty, openStacks: NA.singleton "hole" }
 
 emptyStack :: RStack
 emptyStack = mempty
