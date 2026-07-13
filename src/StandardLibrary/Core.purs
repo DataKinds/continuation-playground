@@ -71,3 +71,24 @@ gainKnowledge = do
     mn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     sn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     pure [ "\\", mn', "\\", sn', "suck" ]
+
+  --| Push and pull data across same-module stack
+  L.define "core" "peck" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    sn' <- L.popWithUnderflow mn sn
+    rv <- L.popWithUnderflow mn sn
+    L.push mn sn' rv
+  L.define "core" "peck:" $ C.NativeSyntax do
+    sn' <- L.nextWordTrimmedOrThrowEOF "peck:"
+    pure [ "\\", sn', "peck" ]
+  L.define "core" "want" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    sn' <- L.popWithUnderflow mn sn
+    rv <- L.popWithUnderflow mn sn'
+    L.push mn sn rv
+  L.define "core" "want:" $ C.NativeSyntax do
+    sn' <- L.nextWordTrimmedOrThrowEOF "want:"
+    pure [ "\\", sn', "want" ]
+
