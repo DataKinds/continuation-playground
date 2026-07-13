@@ -287,13 +287,13 @@ vmAction input = let
 execVMAff :: forall a. RealEval a -> RealState -> Aff RealState
 execVMAff action starting@(RealState { errorHandler }) =
   let
-    throwable :: ExceptT VMError Aff RealState
-    throwable = execStateT action starting
-  in
-    do
-      out <- runExceptT throwable
-      case out of
-        Right newState -> pure newState
-        Left err -> do
-          liftEffect $ errorHandler err
-          pure starting
+    -- throwable :: ExceptT VMError Aff RealState
+    -- throwable = execStateT action starting
+    throwable :: StateT RealState Aff (Either VMError a)
+    throwable = runExceptT action
+  in do
+    Tuple possibleError newState <- runStateT throwable starting
+    case possibleError of
+      Left vmErr -> liftEffect $ errorHandler vmErr
+      Right _ -> pure unit
+    pure newState

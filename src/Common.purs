@@ -58,5 +58,5 @@ newtype RealState = RealState
 derive instance newtypeRealState :: Newtype RealState _
 
 
-type RealEval = StateT RealState (ExceptT VMError Aff) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
+type RealEval = ExceptT VMError (StateT RealState Aff) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
 
