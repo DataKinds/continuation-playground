@@ -4,11 +4,11 @@ import Prelude
 
 import Common as C
 import Control.Monad.State (get)
-import Effect.Class (liftEffect)
-import Lang as L
+import Data.Array.NonEmpty as NA
 import Data.HashMap as HM
 import Data.String as S
-import Data.Array.NonEmpty as NA
+import Effect.Class (liftEffect)
+import Lang as L
 
 --| Load up functions that hook into the interpreter internals
 gainDebugKnowledge :: C.RealEval Unit
@@ -20,7 +20,6 @@ gainDebugKnowledge = do
     mn <- L.getOpenModule
     sn <- L.getOpenStack
     m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
-
     let
       lines = join
         [ [ "module-toy 0. enjoy your stay"
@@ -40,4 +39,14 @@ gainDebugKnowledge = do
         ]
     liftEffect <<< l <<< S.joinWith "\n" $ lines
     pure unit
+  L.define "debug" "..." $ C.Native do 
+    l <- map liftEffect <$> L.getLogger
+    mn <- L.getOpenModule
+    sn <- L.getOpenStack
+    m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
+    let 
+      moduleLine = "module " <> mn <> ", open stack " <> sn
+      stackLines = HM.toArrayBy (\sn s -> sn <> show s) stacks
+    l $ moduleLine <> "\n    " <> S.joinWith "\n    " stackLines
+
 

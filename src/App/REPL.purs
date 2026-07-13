@@ -130,6 +130,7 @@ handleAction action = do
               SLD.gainDebugKnowledge
             handleAction $ RunCode "\\ hello \\ world ..."
             handleAction $ RunCode "?"
+            handleAction $ RunCode "..."
           RawInput ie -> pure unit
           RawKeyUp ke -> case KE.key ke of
             "Enter" -> do

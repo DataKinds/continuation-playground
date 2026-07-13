@@ -13,10 +13,10 @@ gainKnowledge = do
   L.define "main" "help" $ C.Native do
     l <- map liftEffect <$> L.getLogger
     l "need help?!" 
-  L.define "main" "..." $ C.Native do
+  L.define "main" ".." $ C.Native do
     l <- map liftEffect <$> L.getLogger
     sn <- L.dumpOpenStack
-    l $ show sn -- TODO: dump whole stack
+    l $ show sn
   L.define "main" "\\" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "backslash"
     mn <- L.getOpenModule
