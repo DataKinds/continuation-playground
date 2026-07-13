@@ -143,8 +143,12 @@ handleAction action = do
             liftEffect (appendInputReadback doc outputElem code)
             outputGroupEl <- liftEffect (appendOutputGroup doc outputElem)
             let
-              groupLog s = traceM "CORRECT LOGGER" *> appendOutput doc outputGroupEl s
-              groupErr e = appendOutput doc outputGroupEl (show e)
+              groupLog s = do
+                traceM $ "Got output from language:" <> s 
+                appendOutput doc outputGroupEl s
+              groupErr e = do
+                traceM e
+                appendOutput doc outputGroupEl (show e)
             liftVM do
               L.setErrhandler groupErr
               L.setLogger groupLog

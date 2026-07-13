@@ -236,7 +236,7 @@ instance monadEvalRealEval :: MonadVM RealEval where
         expansion <- fmacro
         -- traceM $ "got an expansion"
         -- traceM expansion
-        _ <- sequence $ map pushRawWord expansion
+        _ <- sequence $ map pushRawWord (A.reverse expansion)
         pure unit
       Just (CanonSyntax defmacro) ->
         pure unit -- TODO
