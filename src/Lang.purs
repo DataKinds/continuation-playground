@@ -34,7 +34,6 @@ import Halogen.Aff as HA
 import Halogen.VDom.Driver (runUI)
 import Web.DOM.Document (doctype)
 
-type VMError = Error -- TODO: enumerate this
 
 emptyModule :: forall m. Module m
 emptyModule = { chain: mempty, defs: HM.empty, stacks: mempty, openStacks: NA.singleton "main" }
@@ -43,11 +42,9 @@ emptyStack :: RStack
 emptyStack = mempty
 
 emptyRealState :: RealState
-emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0, errorHandler: Console.errorShow, outputHandler: Console.log }
+emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main", source: [], sourceIx: 0, errorHandler: traceM, outputHandler: Console.log }
 
-throw = error >>> throwError
-throwUnderflow = throw "stack underflow" -- TODO: better errors
-throwEOF after = throw $ "expected word after " <> after <> ", got EOF"
+throwEOF after = throwError <<< EOF $ "expected word after " <> after <> ", got EOF"
 
 nextWordTrimmedOrThrowEOF errMsg = do
   nw <- nextWordTrimmed
@@ -95,8 +92,8 @@ alterStack :: ModuleName -> StackName -> (RStack -> Maybe RStack) -> RealEval Un
 alterStack mn sn f = alterModule mn \m@{ stacks } -> pure $ m { stacks = HM.alter (fromMaybe emptyStack >>> f) sn stacks }
 
 --| What module should we currently be executing in? TODO: this should be removable
-_getOpenModule :: RealEval ModuleName
-_getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
+_getActiveModule :: RealEval ModuleName
+_getActiveModule = get <#> \(RealState { openModules }) -> NA.head openModules
 
 
 -- withErrhandler :: forall e m n a b. MonadSwappableLogger e m => MonadThrow e n => (a -> n b) -> m (n b)
@@ -107,7 +104,8 @@ _getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
 --| Things that read from the VM state without changing it
 class MonadThrow VMError m <= MonadReadVM m where
   --| What module is active for execution? 
-  getOpenModule :: m ModuleName
+  getActiveModule :: m ModuleName
+  getOpenModuleChain :: m (NA.NonEmptyArray ModuleName) 
   --| What stack are we actively executing on?
   getOpenStack :: m StackName
   --| Grab a runtime instance of the open stack
@@ -118,10 +116,11 @@ class MonadThrow VMError m <= MonadReadVM m where
   lookup :: ModuleName -> WordName -> m (Maybe (Definition m))
 
 instance MonadReadVM RealEval where
-  getOpenModule = get <#> \(RealState { openModules }) -> NA.head openModules
-  getOpenStack = _getOpenModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+  getActiveModule = get <#> \(RealState { openModules }) -> NA.head openModules
+  getOpenModuleChain = get <#> \(RealState { openModules }) -> openModules
+  getOpenStack = _getActiveModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
   dumpOpenStack = do
-    mn <- _getOpenModule
+    mn <- _getActiveModule
     sn <- getOpenStack
     getOrMakeStack mn sn
   peek mn sn depth = do
@@ -168,10 +167,10 @@ instance MonadVMTape RealEval where
 class (MonadReadVM m, MonadVMTape m, MonadEffect m, MonadAff m, MonadSwappableLogger VMError m, MonadThrow VMError m) <= MonadVM m where
   --| Add a definition, given a module name, definition name, and definition. 
   define :: ModuleName -> WordName -> Definition m -> m Unit
-  --| Switch the active module used for execution.
+  --| Push and pop the active module used for execution.
   enter :: ModuleName -> m Unit
   leave :: m Unit
-  --| Within the active module, switch the active stack used for execution.
+  --| Within the active module, push and pop the active stack used for execution.
   into :: StackName -> m Unit
   outof :: m Unit
   --| Run a continuation in the current module, one word at a time.
@@ -209,11 +208,11 @@ instance monadEvalRealEval :: MonadVM RealEval where
       Just newModules -> modify_ \(RealState st) -> RealState st { openModules = newModules }
 
   into sn = do
-    mn <- getOpenModule
+    mn <- getActiveModule
     alterModule mn \m -> Just m { openStacks = NA.cons sn m.openStacks }
 
   outof = do
-    mn <- _getOpenModule -- TODO: why can't I just call getOpenModule here???
+    mn <- getActiveModule 
     alterModule mn \m@{ openStacks } ->
       let
         { head: _, tail } = NA.uncons openStacks
@@ -224,10 +223,9 @@ instance monadEvalRealEval :: MonadVM RealEval where
           Just newStacks -> Just m { openStacks = newStacks }
 
   execute cont = do
-    mn <- getOpenModule
-    maybeDef <- lookup mn cont
-    case maybeDef of
-      Nothing -> throwError <<< error $ "unknown word " <> cont <> " in module " <> mn
+    mns <- getOpenModuleChain
+    case NA.findMap (\mn -> pure $ lookup mn cont) mns of
+      Nothing -> throwError $ UnknownWord (NA.toArray mns) cont
       Just (Native f) -> f
       Just (Canon def) -> do
         _ <- sequence $ map execute def

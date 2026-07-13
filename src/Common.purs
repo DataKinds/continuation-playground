@@ -35,16 +35,28 @@ type Module evalM =
   , openStacks :: NonEmptyArray StackName
   }
 
+data VMError
+  = UnknownWord (Array ModuleName) WordName
+  | EOF String
+  | Underflow ModuleName StackName
+  | UnknownError String
+instance Show VMError where
+  show (UnknownWord mn wn) = "Unknown word " <> wn <> " in modules " <> (show mn)
+  show (EOF s) = "EOF " <> s
+  show (Underflow mn sn) = "Underflow " <> mn <> "." <> sn
+  show (UnknownError s) = "Unknown " <> s
+
 newtype RealState = RealState
   { modules :: HashMap ModuleName (Module RealEval)
   , openModules :: NonEmptyArray ModuleName
   , source :: Array String
   , sourceIx :: Int
-  , errorHandler :: Error -> Effect Unit
+  , errorHandler :: VMError -> Effect Unit
   , outputHandler :: String -> Effect Unit
   }
 
 derive instance newtypeRealState :: Newtype RealState _
 
-type RealEval = StateT RealState (ExceptT Error Aff) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
+
+type RealEval = StateT RealState (ExceptT VMError Aff) -- TODO: custom Error datatype, with MonadThrow/MonadCatch OurError Effect instances
 

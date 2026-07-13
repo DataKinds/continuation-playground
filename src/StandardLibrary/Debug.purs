@@ -17,7 +17,7 @@ gainDebugKnowledge = do
   L.define "debug" "?" $ C.Native do
     C.RealState { modules, openModules } <- get
     l <- map liftEffect <$> L.getLogger
-    mn <- L.getOpenModule
+    mn <- L.getActiveModule
     sn <- L.getOpenStack
     m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
     let
@@ -41,7 +41,7 @@ gainDebugKnowledge = do
     pure unit
   L.define "debug" "..." $ C.Native do 
     l <- map liftEffect <$> L.getLogger
-    mn <- L.getOpenModule
+    mn <- L.getActiveModule
     sn <- L.getOpenStack
     m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
     let 
