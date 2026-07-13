@@ -25,10 +25,11 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Lang (execVMAff, gainDebugKnowledge, initialDebugVMAction, vmAction)
 import Lang as L
 import Partial.Unsafe (unsafePartial)
 import Safe.Coerce (coerce)
+import StandardLibrary.Core as SLC
+import StandardLibrary.Debug as SLD
 import Web.DOM.Document as D
 import Web.DOM.Element (Element, setClassName, toNode)
 import Web.DOM.Node (appendChild, textContent)
@@ -110,7 +111,7 @@ appendInputReadback doc outputElem rawInput = do
 liftVM :: forall a s o m. MonadAff m => RealEval a -> H.HalogenM State Action s o m Unit
 liftVM vmA = do
   { vmState } <- H.get
-  newVmState <- H.liftAff $ execVMAff vmA vmState
+  newVmState <- H.liftAff $ L.execVMAff vmA vmState
   H.modify_ _ { vmState = newVmState }
 
 handleAction :: forall s o m. MonadAff m => Action → H.HalogenM State Action s o m Unit
@@ -125,8 +126,8 @@ handleAction action = do
           Mount -> do
             -- Set up the VM
             liftVM $ do 
-              L.gainKnowledge
-              L.gainDebugKnowledge
+              SLC.gainKnowledge
+              SLD.gainDebugKnowledge
             handleAction $ RunCode "\\ hello \\ world ..."
             handleAction $ RunCode "?"
           RawInput ie -> pure unit
@@ -144,8 +145,7 @@ handleAction action = do
               groupLog s = traceM "CORRECT LOGGER" *> appendOutput doc outputGroupEl s
               groupErr e = appendOutput doc outputGroupEl (show e)
             liftVM do
-              traceM "in LIFT VM!"
               L.setErrhandler groupErr
               L.setLogger groupLog
-              vmAction code
+              L.vmAction code
     _ -> pure unit

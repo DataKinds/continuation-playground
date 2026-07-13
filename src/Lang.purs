@@ -55,34 +55,6 @@ nextWordTrimmedOrThrowEOF errMsg = do
     Nothing -> throwEOF errMsg
     Just nw' -> pure nw'
 
---| Load up the standard library.
-gainKnowledge :: forall m. MonadVM m => MonadSwappableLogger VMError m => m Unit
-gainKnowledge = do
-  define "main" "help" $ Native do
-    l <- map liftEffect <$> getLogger
-    l "need help?!" 
-  define "main" "..." $ Native do
-    l <- map liftEffect <$> getLogger
-    sn <- dumpOpenStack
-    l $ show sn -- TODO: dump whole stack
-  define "main" "\\" $ NativeSyntax do
-    nw <- nextWordTrimmedOrThrowEOF "backslash"
-    mn <- getOpenModule
-    sn <- getOpenStack
-    push mn sn nw
-    pure []
-
-  define "main" "enter" $ Native do
-    mn <- getOpenModule
-    sn <- getOpenStack
-    rv <- pop mn sn
-    case rv of
-      Nothing -> throwUnderflow
-      Just rv' -> enter rv'
-
-  define "main" "ENTER:" $ NativeSyntax do
-    nw <- nextWordTrimmedOrThrowEOF "ENTER:"
-    pure [ "\\", nw, "enter" ]
 
 class (MonadEffect m, MonadError e m) <= MonadSwappableLogger e m | m -> e where
   setErrhandler :: (e -> Effect Unit) -> m Unit
@@ -95,37 +67,6 @@ instance MonadSwappableLogger VMError RealEval where
   setLogger oH = modify_ \(RealState st) -> RealState st { outputHandler = oH }
   getErrhandler = get <#> \(RealState st) -> st.errorHandler
   getLogger = get <#> \(RealState st) -> st.outputHandler
-
---| Load up functions that hook into the interpreter internals
-gainDebugKnowledge :: RealEval Unit
-gainDebugKnowledge = do
-  depend "main" "debug"
-  define "debug" "?" $ Native do
-    RealState { modules, openModules } <- get 
-    l <- map liftEffect <$> getLogger
-    mn <- getOpenModule
-    sn <- getOpenStack
-    m@{ chain, defs, stacks, openStacks } <- getOrMakeModule mn
-
-    let
-      lines = join
-        [ [ "module-toy 0. enjoy your stay"
-          , ""
-          , show (HM.size modules) <> " modules loaded (" <> S.joinWith "," (HM.keys modules) <> ")"
-          , "you've entered the scope of " <> show (NA.length openModules) <> " modules. currently " <> mn <> " is active"
-          , ""
-          , "within this module (" <> mn <> "), there are " <> show (HM.size defs) <> " definitions:"
-          ]
-        , HM.toArrayBy (\k v -> "  * " <> k <> ": " <> show v) defs
-        , [ ""
-          , "this module (" <> mn <> ") has the following resolution chain: [" <> S.joinWith "," chain <> "]"
-          ]
-        , [ ""
-          , "within this module (" <> mn <> ") there are " <> show (HM.size stacks) <> " stacks, and " <> sn <> " is active"
-          ]
-        ]
-    liftEffect <<< l <<< S.joinWith "\n" $ lines
-    pure unit
 
 --=== Lenses for the module and stack types ===--
 getOrMakeModule :: ModuleName -> RealEval (Module RealEval)
@@ -321,14 +262,14 @@ executeNextWord = do
     Just nw -> catchError (execute nw) errorHandler *> pure true
 
 --| Initialize a language evaluation monad
-initialVMAction :: forall m. MonadVM m => (VMError → Effect Unit) → (String → Effect Unit) → m Unit
-initialVMAction errHandler outputHandler =
-  setLogger outputHandler
-    *> setErrhandler errHandler
-    *> gainKnowledge
+-- initialVMAction :: forall m. MonadVM m => (VMError → Effect Unit) → (String → Effect Unit) → m Unit
+-- initialVMAction errHandler outputHandler =
+--   setLogger outputHandler
+--     *> setErrhandler errHandler
+--     *> gainKnowledge
 
-initialDebugVMAction :: (VMError → Effect Unit) → (String → Effect Unit) → RealEval Unit
-initialDebugVMAction errHandler outputHandler = initialVMAction errHandler outputHandler *> gainDebugKnowledge
+-- initialDebugVMAction :: (VMError → Effect Unit) → (String → Effect Unit) → RealEval Unit
+-- initialDebugVMAction errHandler outputHandler = initialVMAction errHandler outputHandler *> gainDebugKnowledge
 
 --| Execute some code within the evaluation monad
 vmAction :: forall m. MonadVM m => MonadRec m => String -> m Unit
@@ -353,4 +294,3 @@ execVMAff action starting@(RealState { errorHandler }) =
         Left err -> do
           liftEffect $ errorHandler err
           pure starting
-
