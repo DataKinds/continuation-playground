@@ -22,7 +22,7 @@ import Data.Number (e)
 import Data.String (trim)
 import Data.String as S
 import Data.Traversable (sequence, sequence_)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), snd)
 import Debug (traceM)
 import Effect (Effect)
 import Effect.Aff (Aff)
@@ -107,7 +107,8 @@ class MonadThrow VMError m <= MonadReadVM m where
   getActiveModule :: m ModuleName
   getOpenModuleChain :: m (NA.NonEmptyArray ModuleName) 
   --| What stack are we actively executing on?
-  getOpenStack :: m StackName
+  getActiveStack :: m StackName
+  getOpenStackStack :: m (NA.NonEmptyArray StackName)
   --| Grab a runtime instance of the open stack
   dumpOpenStack :: m RStack
   --| Peek at a value on a stack
@@ -116,12 +117,13 @@ class MonadThrow VMError m <= MonadReadVM m where
   lookup :: ModuleName -> WordName -> m (Maybe (Definition m))
 
 instance MonadReadVM RealEval where
-  getActiveModule = get <#> \(RealState { openModules }) -> NA.head openModules
+  getActiveModule = _getActiveModule
   getOpenModuleChain = get <#> \(RealState { openModules }) -> openModules
-  getOpenStack = _getActiveModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks -- TODO: WTF?
+  getActiveStack = _getActiveModule >>= getOrMakeModule >>= \{ openStacks } -> pure $ NA.head openStacks 
+  getOpenStackStack = _getActiveModule >>= getOrMakeModule >>= \{ openStacks } -> pure openStacks
   dumpOpenStack = do
     mn <- _getActiveModule
-    sn <- getOpenStack
+    sn <- getActiveStack
     getOrMakeStack mn sn
   peek mn sn depth = do
     stack <- getOrMakeStack mn sn
@@ -246,6 +248,13 @@ instance monadEvalRealEval :: MonadVM RealEval where
         pure unit -- TODO
 
 
+popWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m RValue
+popWithUnderflow mn sn = do
+  p <- pop mn sn
+  case p of
+    Nothing -> throwError $ Underflow mn sn
+    Just p' -> pure p'
+
 --| Like popRawWord, but skips whitespace if you don't care.
 nextWordTrimmed :: forall m. MonadVM m => m (Maybe String)
 nextWordTrimmed = do
@@ -264,16 +273,6 @@ executeNextWord = do
   case maybeNw of
     Nothing -> pure false
     Just nw -> catchError (execute nw) errorHandler *> pure true
-
---| Initialize a language evaluation monad
--- initialVMAction :: forall m. MonadVM m => (VMError → Effect Unit) → (String → Effect Unit) → m Unit
--- initialVMAction errHandler outputHandler =
---   setLogger outputHandler
---     *> setErrhandler errHandler
---     *> gainKnowledge
-
--- initialDebugVMAction :: (VMError → Effect Unit) → (String → Effect Unit) → RealEval Unit
--- initialDebugVMAction errHandler outputHandler = initialVMAction errHandler outputHandler *> gainDebugKnowledge
 
 --| Execute some code within the evaluation monad
 vmAction :: forall m. MonadVM m => MonadRec m => String -> m Unit

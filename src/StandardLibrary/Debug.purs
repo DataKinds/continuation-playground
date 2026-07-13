@@ -21,7 +21,8 @@ gainDebugKnowledge = do
     l <- map liftEffect <$> L.getLogger
     mn <- L.getActiveModule
     mns <- L.getOpenModuleChain
-    sn <- L.getOpenStack
+    sn <- L.getActiveStack
+    sns <- L.getOpenStackStack
     m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
     let
       unlist :: forall a. Foldable a => a String -> String
@@ -38,17 +39,17 @@ gainDebugKnowledge = do
         , ""
         , "within " <> mn <> ", the resolution chain is: " <> unlist chain
         , ""
-        , "within " <> mn <> ", the active stack is " <> sn <> ". overall, we have:"
-        , unlines $ HM.toArrayBy (\sn s -> sn <> show s) stacks
-
+        , "within " <> mn <> ", open stacks (active first): " <> unlist sns
+        , ""
+        , "within " <> mn <> ", there are " <> show (HM.size stacks) <> " stacks:"
+        , unlines $ HM.toArrayBy (\sn' s -> sn' <> show s) stacks
         ]
-
     liftEffect <<< l <<< S.joinWith "\n" $ lines
     pure unit
   L.define "debug" "..." $ C.Native do
     l <- map liftEffect <$> L.getLogger
     mn <- L.getActiveModule
-    sn <- L.getOpenStack
+    sn <- L.getActiveStack
     m@{ chain, defs, stacks, openStacks } <- L.getOrMakeModule mn
     let
       moduleLine = "module " <> mn <> ", open stack " <> sn

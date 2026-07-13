@@ -24,4 +24,6 @@
   font-size: small;
   font-weight: 400;
   font-style: normal;
+  display: flex;
+  flex-direction: column-reverse;
 }

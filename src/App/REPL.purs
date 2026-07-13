@@ -15,6 +15,7 @@ import Prelude
 import Type.Proxy
 
 import Control.Monad.Rec.Class (class MonadRec)
+import Data.Tuple 
 import Debug (traceM)
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
@@ -82,16 +83,17 @@ setInnerHTML ∷ Element → String → Effect Unit
 setInnerHTML = runEffectFn2 _setInnerHTML
 
 --| Returns the element that you should pass to appendOutput
-appendOutputGroup :: HTMLDocument -> Element -> Effect Element
+appendOutputGroup :: HTMLDocument -> Element -> Effect (Tuple Element Element)
 appendOutputGroup doc outputElem = do
   let d = toDocument doc
   detailsEl <- D.createElement "details" d
   setAttribute "open" "true" detailsEl
   summaryEl <- D.createElement "summary" d
+  setClassName "input-readback" summaryEl
   setInnerHTML summaryEl "Output"
   appendChild (toNode summaryEl) (toNode detailsEl) 
   appendChild (toNode detailsEl) (toNode outputElem) 
-  pure detailsEl
+  pure $ Tuple summaryEl detailsEl
 
 --| Appends output to a given element
 appendOutput :: HTMLDocument -> Element -> String -> Effect Unit
@@ -100,14 +102,6 @@ appendOutput doc detailsEl rawOutput = do
   pEl <- D.createElement "p" d
   setInnerHTML pEl rawOutput
   appendChild (toNode pEl) (toNode detailsEl) 
-
-appendInputReadback :: HTMLDocument -> Element -> String -> Effect Unit
-appendInputReadback doc outputElem rawInput = do
-  let d = toDocument doc
-  readbackEl <- D.createElement "div" d
-  setClassName "input-readback" readbackEl
-  setInnerHTML readbackEl ("You duly executed: " <> rawInput)
-  appendChild (toNode readbackEl) (toNode outputElem) 
 
 liftVM :: forall a s o m. MonadAff m => RealEval a -> H.HalogenM State Action s o m Unit
 liftVM vmA = do
@@ -140,8 +134,8 @@ handleAction action = do
           StandardOutput rawHtml -> pure unit
           StandardError rawHtml -> pure unit
           RunCode code -> do
-            liftEffect (appendInputReadback doc outputElem code)
-            outputGroupEl <- liftEffect (appendOutputGroup doc outputElem)
+            Tuple readbackEl outputGroupEl <- liftEffect (appendOutputGroup doc outputElem)
+            liftEffect $ setInnerHTML readbackEl ("You duly executed: " <> code)
             let
               groupLog s = do
                 traceM $ "Got output from language:" <> s 
