@@ -25,7 +25,7 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Lang (execVMAff, initialDebugVMAction, vmAction)
+import Lang (execVMAff, gainDebugKnowledge, initialDebugVMAction, vmAction)
 import Lang as L
 import Partial.Unsafe (unsafePartial)
 import Safe.Coerce (coerce)
@@ -80,17 +80,24 @@ foreign import _setInnerHTML :: EffectFn2 Element String Unit
 setInnerHTML ∷ Element → String → Effect Unit
 setInnerHTML = runEffectFn2 _setInnerHTML
 
-appendOutput :: HTMLDocument -> Element -> String -> Effect Unit
-appendOutput doc outputElem rawOutput = do
+--| Returns the element that you should pass to appendOutput
+appendOutputGroup :: HTMLDocument -> Element -> Effect Element
+appendOutputGroup doc outputElem = do
   let d = toDocument doc
   detailsEl <- D.createElement "details" d
   summaryEl <- D.createElement "summary" d
-  pEl <- D.createElement "p" d
-  setInnerHTML pEl rawOutput
   setInnerHTML summaryEl "Output"
-  appendChild (toNode pEl) (toNode detailsEl) 
   appendChild (toNode summaryEl) (toNode detailsEl) 
   appendChild (toNode detailsEl) (toNode outputElem) 
+  pure detailsEl
+
+--| Appends output to a given element
+appendOutput :: HTMLDocument -> Element -> String -> Effect Unit
+appendOutput doc detailsEl rawOutput = do
+  let d = toDocument doc
+  pEl <- D.createElement "p" d
+  setInnerHTML pEl rawOutput
+  appendChild (toNode pEl) (toNode detailsEl) 
 
 appendInputReadback :: HTMLDocument -> Element -> String -> Effect Unit
 appendInputReadback doc outputElem rawInput = do
@@ -114,17 +121,12 @@ handleAction action = do
 
   case [ maybeOutputElem, maybeInputElem ] of
     [ Just outputElem, Just inputElem ] ->
-      let
-        log s = do
-          traceM "LOGGING"
-          traceM s
-          appendOutput doc outputElem s
-        err e = appendOutput doc outputElem (show e)
-      in
         case action of
           Mount -> do
             -- Set up the VM
-            liftVM $ initialDebugVMAction err log
+            liftVM $ do 
+              L.gainKnowledge
+              L.gainDebugKnowledge
             handleAction $ RunCode "\\ hello \\ world ..."
             handleAction $ RunCode "?"
           RawInput ie -> pure unit
@@ -137,5 +139,13 @@ handleAction action = do
           StandardError rawHtml -> pure unit
           RunCode code -> do
             liftEffect (appendInputReadback doc outputElem code)
-            liftVM (vmAction code)
+            outputGroupEl <- liftEffect (appendOutputGroup doc outputElem)
+            let
+              groupLog s = traceM "CORRECT LOGGER" *> appendOutput doc outputGroupEl s
+              groupErr e = appendOutput doc outputGroupEl (show e)
+            liftVM do
+              traceM "in LIFT VM!"
+              L.setErrhandler groupErr
+              L.setLogger groupLog
+              vmAction code
     _ -> pure unit

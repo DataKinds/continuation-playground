@@ -58,10 +58,11 @@ nextWordTrimmedOrThrowEOF errMsg = do
 --| Load up the standard library.
 gainKnowledge :: forall m. MonadVM m => MonadSwappableLogger VMError m => m Unit
 gainKnowledge = do
-  l <- map liftEffect <$> getLogger
   define "main" "help" $ Native do
+    l <- map liftEffect <$> getLogger
     l "need help?!" 
   define "main" "..." $ Native do
+    l <- map liftEffect <$> getLogger
     sn <- dumpOpenStack
     l $ show sn -- TODO: dump whole stack
   define "main" "\\" $ NativeSyntax do
@@ -98,11 +99,10 @@ instance MonadSwappableLogger VMError RealEval where
 --| Load up functions that hook into the interpreter internals
 gainDebugKnowledge :: RealEval Unit
 gainDebugKnowledge = do
-  -- l <- (getLogger)
-  l <- map liftEffect <$> getLogger
   depend "main" "debug"
   define "debug" "?" $ Native do
-    RealState { modules, openModules } <- get
+    RealState { modules, openModules } <- get 
+    l <- map liftEffect <$> getLogger
     mn <- getOpenModule
     sn <- getOpenStack
     m@{ chain, defs, stacks, openStacks } <- getOrMakeModule mn
