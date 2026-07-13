@@ -31,7 +31,7 @@ import Safe.Coerce (coerce)
 import StandardLibrary.Core as SLC
 import StandardLibrary.Debug as SLD
 import Web.DOM.Document as D
-import Web.DOM.Element (Element, setClassName, toNode)
+import Web.DOM.Element (Element, setAttribute, setClassName, toNode)
 import Web.DOM.Node (appendChild, textContent)
 import Web.Event.Internal.Types (Event)
 import Web.HTML (HTMLDocument, window)
@@ -86,6 +86,7 @@ appendOutputGroup :: HTMLDocument -> Element -> Effect Element
 appendOutputGroup doc outputElem = do
   let d = toDocument doc
   detailsEl <- D.createElement "details" d
+  setAttribute "open" "true" detailsEl
   summaryEl <- D.createElement "summary" d
   setInnerHTML summaryEl "Output"
   appendChild (toNode summaryEl) (toNode detailsEl) 
@@ -128,9 +129,8 @@ handleAction action = do
             liftVM $ do 
               SLC.gainKnowledge
               SLD.gainDebugKnowledge
-            handleAction $ RunCode "\\ hello \\ world ..."
+            handleAction $ RunCode "... \\ hello \\ world ..."
             handleAction $ RunCode "?"
-            handleAction $ RunCode "..."
           RawInput ie -> pure unit
           RawKeyUp ke -> case KE.key ke of
             "Enter" -> do

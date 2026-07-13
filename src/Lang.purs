@@ -219,12 +219,18 @@ instance monadEvalRealEval :: MonadVM RealEval where
         maybeNewStacks = NA.fromArray tail -- fails if tail is empty
       in
         case maybeNewStacks of
-          Nothing -> Just m -- tried to `leave` the final module, just no-op
+          Nothing -> Just m -- tried to `leave` the final stack, just no-op
           Just newStacks -> Just m { openStacks = newStacks }
 
   execute cont = do
     mns <- getOpenModuleChain
-    case NA.findMap (\mn -> pure $ lookup mn cont) mns of
+    let lookInto :: ModuleName -> RealEval (Maybe (Definition RealEval))
+        lookInto mn = lookup mn cont
+    maybeDef <- NA.foldM (\prev mn -> case prev of
+      Nothing -> lookInto mn
+      Just def -> pure $ Just def
+    ) Nothing mns
+    case maybeDef of
       Nothing -> throwError $ UnknownWord (NA.toArray mns) cont
       Just (Native f) -> f
       Just (Canon def) -> do

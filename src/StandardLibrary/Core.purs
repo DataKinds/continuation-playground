@@ -25,7 +25,7 @@ gainKnowledge = do
     L.push mn sn nw
     pure []
 
-  --| Open a stack
+  --| Open or close a stack
   L.define "main" "into" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getOpenStack
@@ -36,6 +36,17 @@ gainKnowledge = do
   L.define "main" ">" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF ">"
     pure [ "\\", nw, "into" ]
+  L.define "main" "into" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getOpenStack
+    maybeRv <- L.pop mn sn
+    case maybeRv of
+      Nothing -> throwError $ C.Underflow mn sn
+      Just rv -> L.into rv
+  L.define "main" ">" $ C.NativeSyntax do
+    nw <- L.nextWordTrimmedOrThrowEOF ">"
+    pure [ "\\", nw, "into" ]
+
 
   --| Open a module
   L.define "main" "enter" $ C.Native do
