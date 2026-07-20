@@ -48,12 +48,19 @@ emptyRealState = RealState { modules: HM.empty, openModules: NA.singleton "main"
 
 throwEOF after = throwError <<< EOF $ "expected word after " <> after <> ", got EOF"
 
+nextWordTrimmedOrThrowEOF :: forall m. Bind m ⇒ MonadVM m ⇒ String → m String
 nextWordTrimmedOrThrowEOF errMsg = do
   nw <- nextWordTrimmed
   case nw of
     Nothing -> throwEOF errMsg
     Just nw' -> pure nw'
 
+nextWordOrThrowEOF :: forall m. Bind m ⇒ MonadVM m ⇒ String → m String
+nextWordOrThrowEOF errMsg = do
+  nw <- popRawWord
+  case nw of
+    Nothing -> throwEOF errMsg
+    Just nw' -> pure nw'
 
 class (MonadEffect m, MonadError e m) <= MonadSwappableLogger e m | m -> e where
   setErrhandler :: (e -> Effect Unit) -> m Unit
@@ -157,7 +164,7 @@ class Monad m <= MonadVMTape m where
   pushRawWord :: String -> m Unit
 
 wordSplitRegex :: R.Regex
-wordSplitRegex = R.unsafeRegex "(\\s)" R.global
+wordSplitRegex = R.unsafeRegex "(\\s+)" R.global
 
 instance MonadVMTape RealEval where
   loadRaw raw = do
@@ -252,7 +259,14 @@ instance monadEvalRealEval :: MonadVM RealEval where
       Just (CanonSyntax defmacro) ->
         pure unit -- TODO
 
-
+--| Stack popping helpers, type specialized 
+popTermWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m String
+popTermWithUnderflow mn sn = do
+  p <- pop mn sn
+  case p of
+    Nothing -> throwError $ Underflow mn sn
+    Just (Term s) -> pure s
+    Just rv -> throwError $ WhatsThat mn sn "<term>" (show rv)
 popWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m RValue
 popWithUnderflow mn sn = do
   p <- pop mn sn

@@ -1,10 +1,13 @@
 module StandardLibrary.Core where
 
+import Data.Array
 import Data.Maybe
 import Prelude
 
+import Common (VMError(..))
 import Common as C
 import Control.Monad.Error.Class (throwError)
+import Debug (traceM)
 import Effect.Class (liftEffect)
 import Lang as L
 
@@ -23,14 +26,29 @@ gainKnowledge = do
     nw <- L.nextWordTrimmedOrThrowEOF "backslash"
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    L.push mn sn nw
+    L.push mn sn (C.Term nw)
     pure []
-
+  let 
+    popLoop :: Array String -> m (Array String)
+    popLoop ws = do
+        w <- L.nextWordOrThrowEOF "["
+        case w of
+          " " -> popLoop ws
+          "]" -> pure $ reverse ws 
+          "\\]" -> popLoop ("]":ws)
+          _ -> popLoop (w:ws)
+  L.define "core" "[" $ C.NativeSyntax do
+    nws <- popLoop []
+    traceM nws
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    L.push mn sn (C.Quote (C.Term <$> nws))
+    pure []
   --| Open or close a stack
   L.define "core" "into" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    rv <- L.popWithUnderflow mn sn
+    rv <- L.popTermWithUnderflow mn sn
     L.into rv
   L.define "core" "into:" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "into:"
@@ -41,7 +59,7 @@ gainKnowledge = do
   L.define "core" "enter" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    rv <- L.popWithUnderflow mn sn
+    rv <- L.popTermWithUnderflow mn sn
     L.enter rv
   L.define "core" "enter:" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "enter:"
@@ -52,8 +70,8 @@ gainKnowledge = do
   L.define "core" "kiss" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    sn' <- L.popWithUnderflow mn sn
-    mn' <- L.popWithUnderflow mn sn
+    sn' <- L.popTermWithUnderflow mn sn
+    mn' <- L.popTermWithUnderflow mn sn
     rv <- L.popWithUnderflow mn sn
     L.push mn' sn' rv
   L.define "core" "kiss:" $ C.NativeSyntax do
@@ -63,8 +81,8 @@ gainKnowledge = do
   L.define "core" "suck" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    sn' <- L.popWithUnderflow mn sn
-    mn' <- L.popWithUnderflow mn sn
+    sn' <- L.popTermWithUnderflow mn sn
+    mn' <- L.popTermWithUnderflow mn sn
     rv <- L.popWithUnderflow mn' sn'
     L.push mn sn rv
   L.define "core" "suck:" $ C.NativeSyntax do
@@ -76,7 +94,7 @@ gainKnowledge = do
   L.define "core" "peck" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    sn' <- L.popWithUnderflow mn sn
+    sn' <- L.popTermWithUnderflow mn sn
     rv <- L.popWithUnderflow mn sn
     L.push mn sn' rv
   L.define "core" "peck:" $ C.NativeSyntax do
@@ -85,7 +103,7 @@ gainKnowledge = do
   L.define "core" "want" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    sn' <- L.popWithUnderflow mn sn
+    sn' <- L.popTermWithUnderflow mn sn
     rv <- L.popWithUnderflow mn sn'
     L.push mn sn rv
   L.define "core" "want:" $ C.NativeSyntax do

@@ -8,6 +8,7 @@ import Data.Array as A
 import Data.Array.NonEmpty as NA
 import Data.Foldable (class Foldable)
 import Data.HashMap as HM
+import Data.Show.Generic (genericShow)
 import Data.String as S
 import Effect.Class (liftEffect)
 import Lang as L
