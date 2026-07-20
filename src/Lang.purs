@@ -19,13 +19,15 @@ import Data.List as L
 import Data.List.Lazy as LL
 import Data.Newtype (class Newtype, unwrap)
 import Data.Number (e)
-import Data.String (trim)
 import Data.String as S
+import Data.String.Regex as R
+import Data.String.Regex.Unsafe as R
+import Data.String.Regex.Flags as R
 import Data.Traversable (sequence, sequence_)
 import Data.Tuple (Tuple(..), snd)
 import Debug (traceM)
 import Effect (Effect)
-import Effect.Aff (Aff)
+import Effect.Aff (Aff, error)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Console as Console
@@ -154,10 +156,13 @@ class Monad m <= MonadVMTape m where
   --| Push a single, raw, space-delimited word back to the input
   pushRawWord :: String -> m Unit
 
+wordSplitRegex :: R.Regex
+wordSplitRegex = R.unsafeRegex "(\\s)" R.global
+
 instance MonadVMTape RealEval where
-  loadRaw raw = 
+  loadRaw raw = do
     modify_ \(RealState st) -> RealState st { source = words raw, sourceIx = 0 }
-    where words = S.split (S.Pattern " ")
+    where words = R.split wordSplitRegex
   popRawWord = do
     RealState { source, sourceIx } <- get
     modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
@@ -255,14 +260,14 @@ popWithUnderflow mn sn = do
     Nothing -> throwError $ Underflow mn sn
     Just p' -> pure p'
 
---| Like popRawWord, but skips whitespace if you don't care.
+--| Like popRawWord, but skips whitespace-only words if you don't care.
 nextWordTrimmed :: forall m. MonadVM m => m (Maybe String)
 nextWordTrimmed = do
   maybeNw <- popRawWord
   case maybeNw of
     Nothing -> pure Nothing
     Just nw
-      | trim nw == "" -> nextWordTrimmed -- just whitespace, keep scanning
+      | S.trim nw == "" -> nextWordTrimmed -- just whitespace, keep scanning
       | otherwise -> pure $ Just nw
 
 --| Execute the next word ready to be processed by the VM and seek forward. Returns false if out of input.

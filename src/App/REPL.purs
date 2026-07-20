@@ -11,16 +11,17 @@ module App.REPL
 
 import Common
 import Data.Maybe
+import Data.Tuple
 import Prelude
 import Type.Proxy
 
 import Control.Monad.Rec.Class (class MonadRec)
-import Data.Tuple 
 import Debug (traceM)
 import Effect (Effect)
 import Effect.Aff.Class (class MonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Uncurried (EffectFn2, runEffectFn2)
+import Game.Main as GM
 import Halogen (ClassName(..))
 import Halogen as H
 import Halogen.HTML as HH
@@ -37,7 +38,7 @@ import Web.DOM.Node (appendChild, textContent)
 import Web.Event.Internal.Types (Event)
 import Web.HTML (HTMLDocument, window)
 import Web.HTML.HTMLDocument (toDocument)
-import Web.HTML.HTMLInputElement (value, fromElement)
+import Web.HTML.HTMLInputElement as HIE 
 import Web.HTML.Window (document)
 import Web.UIEvent.InputEvent as IE
 import Web.UIEvent.KeyboardEvent as KE
@@ -82,7 +83,8 @@ foreign import _setInnerHTML :: EffectFn2 Element String Unit
 setInnerHTML ∷ Element → String → Effect Unit
 setInnerHTML = runEffectFn2 _setInnerHTML
 
---| Returns the element that you should pass to appendOutput
+--| Create a folding group element for storing REPL output.
+--| Returns the banner element, and the details element that you should pass to appendOutput
 appendOutputGroup :: HTMLDocument -> Element -> Effect (Tuple Element Element)
 appendOutputGroup doc outputElem = do
   let d = toDocument doc
@@ -109,6 +111,19 @@ liftVM vmA = do
   newVmState <- H.liftAff $ L.execVMAff vmA vmState
   H.modify_ _ { vmState = newVmState }
 
+
+--| Action which initializes the VM: load the standard library and transfer execution to the game
+initVM :: forall s o m. MonadAff m => H.HalogenM State Action s o m Unit
+initVM = do
+  -- Load the stdlib
+  liftVM $ do 
+    SLC.gainKnowledge
+    SLD.gainDebugKnowledge
+  -- Run the game's entrypoint
+  handleAction $ RunCode "?"
+  handleAction $ RunCode GM.program
+
+
 handleAction :: forall s o m. MonadAff m => Action → H.HalogenM State Action s o m Unit
 handleAction action = do
   doc <- H.liftEffect (window >>= document)
@@ -118,18 +133,14 @@ handleAction action = do
   case [ maybeOutputElem, maybeInputElem ] of
     [ Just outputElem, Just inputElem ] ->
         case action of
-          Mount -> do
-            -- Set up the VM
-            liftVM $ do 
-              SLC.gainKnowledge
-              SLD.gainDebugKnowledge
-            handleAction $ RunCode "... \\ hello \\ world ..."
-            handleAction $ RunCode "?"
+          Mount -> initVM
           RawInput ie -> pure unit
           RawKeyUp ke -> case KE.key ke of
             "Enter" -> do
-              code <- liftEffect $ value (unsafePartial fromJust <<< fromElement $ inputElem)
+              let hInputElem = unsafePartial fromJust <<< HIE.fromElement $ inputElem
+              code <- liftEffect $ HIE.value hInputElem
               handleAction $ RunCode code
+              liftEffect $ HIE.select hInputElem
             _ -> traceM ke
           StandardOutput rawHtml -> pure unit
           StandardError rawHtml -> pure unit
