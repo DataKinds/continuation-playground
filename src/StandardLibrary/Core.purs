@@ -4,7 +4,6 @@ import Data.Array
 import Data.Maybe
 import Prelude
 
-import Common (VMError(..))
 import Common as C
 import Control.Monad.Error.Class (throwError)
 import Debug (traceM)
@@ -14,6 +13,7 @@ import Lang as L
 --| Load up the standard library.
 gainKnowledge :: forall m. L.MonadVM m => L.MonadSwappableLogger C.VMError m => m Unit
 gainKnowledge = do
+  --| Core knowledge!~
   L.depend "main" "core"
   L.define "core" "help" $ C.Native do
     l <- map liftEffect <$> L.getLogger
@@ -54,7 +54,6 @@ gainKnowledge = do
     nw <- L.nextWordTrimmedOrThrowEOF "into:"
     pure [ "\\", nw, "into" ]
   L.define "core" "outof" $ C.Native L.outof
-
   --| Open or close a module
   L.define "core" "enter" $ C.Native do
     mn <- L.getActiveModule
@@ -65,7 +64,6 @@ gainKnowledge = do
     nw <- L.nextWordTrimmedOrThrowEOF "enter:"
     pure [ "\\", nw, "enter" ]
   L.define "core" "leave" $ C.Native L.leave
-
   --| Push and pull data across stack and module boundaries
   L.define "core" "kiss" $ C.Native do
     mn <- L.getActiveModule
@@ -89,7 +87,6 @@ gainKnowledge = do
     mn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     sn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     pure [ "\\", mn', "\\", sn', "suck" ]
-
   --| Push and pull data across same-module stack
   L.define "core" "peck" $ C.Native do
     mn <- L.getActiveModule
