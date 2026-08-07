@@ -21,7 +21,7 @@ import Effect.Exception (Error)
 data RValue = Term String | Quote (Array RValue) -- Runtime value
 instance Show RValue where
   show (Term s) = s
-  show (Quote rvs) = "[" <> surround " " (show <$> rvs) <> "]"
+  show (Quote rvs) = "[" <> joinWith " " (show <$> rvs) <> "]"
 type RStack = Array RValue
 type ModuleName = String
 type StackName = String

@@ -15,5 +15,5 @@ Life asks us to seek out inspiration and understanding. But sometimes these thin
 
 You, Observer, have been sought and found. 
 
-Wake up, Observer. You're all wired up. What do you call yourself? ] .
+Wake up, Observer. You're all wired up. What do you call yourself? ] .s
 """

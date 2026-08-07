@@ -267,6 +267,13 @@ popTermWithUnderflow mn sn = do
     Nothing -> throwError $ Underflow mn sn
     Just (Term s) -> pure s
     Just rv -> throwError $ WhatsThat mn sn "<term>" (show rv)
+popQuoteWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m (Array RValue)
+popQuoteWithUnderflow mn sn = do
+  p <- pop mn sn
+  case p of
+    Nothing -> throwError $ Underflow mn sn
+    Just (Quote rvs) -> pure rvs
+    Just rv -> throwError $ WhatsThat mn sn "<quote>" (show rv)
 popWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m RValue
 popWithUnderflow mn sn = do
   p <- pop mn sn

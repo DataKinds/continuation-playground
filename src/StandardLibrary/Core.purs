@@ -13,11 +13,15 @@ import Lang as L
 --| Load up the standard library.
 gainKnowledge :: forall m. L.MonadVM m => L.MonadSwappableLogger C.VMError m => m Unit
 gainKnowledge = do
-  --| Core knowledge!~
+  -- Core knowledge!~ --
   L.depend "main" "core"
   L.define "core" "help" $ C.Native do
     l <- map liftEffect <$> L.getLogger
     l "need help?!" 
+
+  -- Base syntax --
+  
+  --| QQ next word
   L.define "core" "\\" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "backslash"
     mn <- L.getActiveModule
@@ -33,6 +37,7 @@ gainKnowledge = do
           "]" -> pure $ reverse ws 
           "\\]" -> popLoop ("]":ws)
           _ -> popLoop (w:ws)
+  --| Consume a quotation
   L.define "core" "[" $ C.NativeSyntax do
     nws <- popLoop []
     traceM nws
@@ -40,7 +45,10 @@ gainKnowledge = do
     sn <- L.getActiveStack
     L.push mn sn (C.Quote (C.Term <$> nws))
     pure []
-  --| Open or close a stack
+
+  -- Multistack navigation --
+
+  --| Open a stack
   L.define "core" "into" $ C.Native do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
@@ -49,7 +57,31 @@ gainKnowledge = do
   L.define "core" "into:" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "into:"
     pure [ "\\", nw, "into" ]
+  --| Close a stack
   L.define "core" "outof" $ C.Native L.outof
+  --| Push data into a stack in the same module
+  L.define "core" "peck" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    sn' <- L.popTermWithUnderflow mn sn
+    rv <- L.popWithUnderflow mn sn
+    L.push mn sn' rv
+  L.define "core" "peck:" $ C.NativeSyntax do
+    sn' <- L.nextWordTrimmedOrThrowEOF "peck:"
+    pure [ "\\", sn', "peck" ]
+  --| Pull data from a stack in the same module
+  L.define "core" "want" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    sn' <- L.popTermWithUnderflow mn sn
+    rv <- L.popWithUnderflow mn sn'
+    L.push mn sn rv
+  L.define "core" "want:" $ C.NativeSyntax do
+    sn' <- L.nextWordTrimmedOrThrowEOF "want:"
+    pure [ "\\", sn', "want" ]
+
+  -- Module navigation --
+
   --| Open or close a module
   L.define "core" "enter" $ C.Native do
     mn <- L.getActiveModule
@@ -83,23 +115,4 @@ gainKnowledge = do
     mn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     sn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     pure [ "\\", mn', "\\", sn', "suck" ]
-  --| Push and pull data across same-module stack
-  L.define "core" "peck" $ C.Native do
-    mn <- L.getActiveModule
-    sn <- L.getActiveStack
-    sn' <- L.popTermWithUnderflow mn sn
-    rv <- L.popWithUnderflow mn sn
-    L.push mn sn' rv
-  L.define "core" "peck:" $ C.NativeSyntax do
-    sn' <- L.nextWordTrimmedOrThrowEOF "peck:"
-    pure [ "\\", sn', "peck" ]
-  L.define "core" "want" $ C.Native do
-    mn <- L.getActiveModule
-    sn <- L.getActiveStack
-    sn' <- L.popTermWithUnderflow mn sn
-    rv <- L.popWithUnderflow mn sn'
-    L.push mn sn rv
-  L.define "core" "want:" $ C.NativeSyntax do
-    sn' <- L.nextWordTrimmedOrThrowEOF "want:"
-    pure [ "\\", sn', "want" ]
 
