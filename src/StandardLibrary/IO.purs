@@ -4,10 +4,15 @@ import Prelude
 
 import Common as C
 import Control.Monad.Error.Class (throwError)
-import Data.String (joinWith)
+import Data.String (joinWith, trim)
 import Debug (traceM)
 import Effect.Class (liftEffect)
 import Lang as L
+
+appendSpaceIfFull :: String -> String
+appendSpaceIfFull s
+  | trim s == "" = s
+  | otherwise = s <> " "
 
 --| Load up the IO functions.
 gainKnowledge :: forall m. L.MonadVM m => L.MonadSwappableLogger C.VMError m => m Unit
@@ -28,7 +33,7 @@ gainKnowledge = do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
     rvs <- L.popQuoteWithUnderflow mn sn
-    l $ joinWith " " $ show <$> rvs
+    l $ joinWith "" $ (appendSpaceIfFull <<< show) <$> rvs
   --| Print the whole current stack
   L.define "io" ".." $ C.Native do
     l <- map liftEffect <$> L.getLogger

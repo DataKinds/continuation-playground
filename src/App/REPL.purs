@@ -107,6 +107,7 @@ appendInputGroup input = do
   lift $ do
     doc <- toDocument <$> getDoc
     details <- createChildElem "details" parent
+    setClassName "row-input" details
     summary <- createChildElem "summary" details
     setInnerHTML summary $ "Input    " <> firstLine
     p <- createChildElem "p" details
@@ -121,11 +122,12 @@ appendOutputGroup = do
   lift $ do
     doc <- toDocument <$> getDoc
     details <- createChildElem "details" parent
+    setClassName "row-output" details
     setAttribute "open" "true" details
     summary <- createChildElem "summary" details
     setInnerHTML summary "Output"
-    content <- createChildElem "div" details
-    pure content
+    -- content <- createChildElem "div" details
+    pure details
 
 --| Appends raw output to a given element, returns the generated paragraph
 appendOutput :: String -> ScratchAppender Element
@@ -176,6 +178,7 @@ handleAction action = do
         StandardError rawHtml -> pure unit
         RunCode code -> do
           replRow <- liftEffect $ createChildElem "div" outputElem
+          liftEffect $ setClassName "repl-row" replRow
           runSA replRow $ appendInputGroup code
           outputEl <- runSA replRow appendOutputGroup
           let
