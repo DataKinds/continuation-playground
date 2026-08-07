@@ -165,16 +165,16 @@ class Monad m <= MonadVMTape m where
 
 wordSplitRegex :: R.Regex
 wordSplitRegex = R.unsafeRegex "(\\s+)" R.global
+lex = R.split wordSplitRegex
 
 instance MonadVMTape RealEval where
   loadRaw raw = do
-    modify_ \(RealState st) -> RealState st { source = words raw, sourceIx = 0 }
-    where words = R.split wordSplitRegex
+    modify_ \(RealState st) -> RealState st { source = lex raw, sourceIx = 0 }
   popRawWord = do
     RealState { source, sourceIx } <- get
     modify_ \(RealState st) -> RealState st { sourceIx = st.sourceIx + 1 }
     pure $ A.index source sourceIx
-  pushRawWord w =
+  pushRawWord w = -- TODO: speed this up cuz it's called on literally every word lookup. we need to switch to a stack for this anyway
     modify_ \(RealState st@{ source, sourceIx }) -> RealState st { source = fromMaybe source $ A.insertAt sourceIx w source }
 
 --| Evaluation monad for the langauge
@@ -248,7 +248,7 @@ instance monadEvalRealEval :: MonadVM RealEval where
       Nothing -> throwError $ UnknownWord (NA.toArray mns) cont
       Just (Native f) -> f
       Just (Canon def) -> do
-        _ <- sequence $ map execute def
+        _ <- sequence $ map pushRawWord (A.reverse def) -- TODO: pushRawSequence? idk. this doesn't amortize tho!
         pure unit
       Just (NativeSyntax fmacro) -> do
         expansion <- fmacro
@@ -267,7 +267,7 @@ popTermWithUnderflow mn sn = do
     Nothing -> throwError $ Underflow mn sn
     Just (Term s) -> pure s
     Just rv -> throwError $ WhatsThat mn sn "<term>" (show rv)
-popQuoteWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m (Array RValue)
+popQuoteWithUnderflow :: forall m. MonadVM m => ModuleName -> StackName -> m String
 popQuoteWithUnderflow mn sn = do
   p <- pop mn sn
   case p of

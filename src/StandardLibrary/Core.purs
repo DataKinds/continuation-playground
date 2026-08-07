@@ -6,9 +6,26 @@ import Prelude
 
 import Common as C
 import Control.Monad.Error.Class (throwError)
-import Debug (traceM)
+import Data.String (joinWith, trim)
+import Debug (trace, traceM)
 import Effect.Class (liftEffect)
 import Lang as L
+
+-- Generic function to consume everything between a balanced pair of words
+poploop :: forall m. L.MonadVM m => String -> String -> m (Array String)
+poploop openWord closeWord = go 0 []
+  where
+  go :: Int -> Array String -> m (Array String)
+  go depth words = do
+    word <- L.nextWordOrThrowEOF openWord
+    let escapedCloseWord = "\\"<>closeWord
+    trace { word, depth } \_ -> case unit of
+      _
+        | word == closeWord, depth <= 0 -> pure $ reverse words
+        | word == openWord -> go (depth + 1) $ word:words
+        | word == closeWord -> go (depth - 1) $ word:words
+        | word == escapedCloseWord -> go depth $ closeWord:words
+        | otherwise -> go depth $ word:words
 
 --| Load up the standard library.
 gainKnowledge :: forall m. L.MonadVM m => L.MonadSwappableLogger C.VMError m => m Unit
@@ -28,22 +45,12 @@ gainKnowledge = do
     sn <- L.getActiveStack
     L.push mn sn (C.Term nw)
     pure []
-  let 
-    popLoop :: Array String -> m (Array String)
-    popLoop ws = do
-        w <- L.nextWordOrThrowEOF "["
-        case w of
-          " " -> popLoop ws
-          "]" -> pure $ reverse ws 
-          "\\]" -> popLoop ("]":ws)
-          _ -> popLoop (w:ws)
   --| Consume a quotation
   L.define "core" "[" $ C.NativeSyntax do
-    nws <- popLoop []
-    traceM nws
+    nws <- poploop "[" "]"
     mn <- L.getActiveModule
     sn <- L.getActiveStack
-    L.push mn sn (C.Quote (C.Term <$> nws))
+    L.push mn sn (C.Quote $ trim $ joinWith "" nws) -- trim cuz the spaces between the [ ] and the string get ingested by nextWordOrThrowEOF
     pure []
 
   -- Multistack navigation --
@@ -115,4 +122,18 @@ gainKnowledge = do
     mn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     sn' <- L.nextWordTrimmedOrThrowEOF "suck:"
     pure [ "\\", mn', "\\", sn', "suck" ]
+
+  -- Definitions --
+
+  --| Define an immediate word by ingesting a term and a quote
+  L.define "core" "define" $ C.Native do
+    mn <- L.getActiveModule
+    sn <- L.getActiveStack
+    body <- L.popQuoteWithUnderflow mn sn
+    name <- L.popTermWithUnderflow mn sn
+    L.define mn name $ C.Canon $ L.lex body
+  L.define "core" ":" $ C.NativeSyntax do
+    name <-  L.nextWordTrimmedOrThrowEOF ":"
+    body <- poploop ":" ";"
+    pure $ [ "\\", name, "[" ] <> body <> [ "]", "define" ]
 

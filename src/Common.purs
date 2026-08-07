@@ -18,10 +18,10 @@ import Effect.Aff (Aff)
 import Effect.Exception (Error)
 
 
-data RValue = Term String | Quote (Array RValue) -- Runtime value
+data RValue = Term String | Quote String -- Runtime value
 instance Show RValue where
   show (Term s) = s
-  show (Quote rvs) = "[" <> joinWith " " (show <$> rvs) <> "]"
+  show (Quote rvs) = "[ " <> rvs <> " ]"
 type RStack = Array RValue
 type ModuleName = String
 type StackName = String

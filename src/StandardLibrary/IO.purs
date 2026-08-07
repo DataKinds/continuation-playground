@@ -33,7 +33,7 @@ gainKnowledge = do
     mn <- L.getActiveModule
     sn <- L.getActiveStack
     rvs <- L.popQuoteWithUnderflow mn sn
-    l $ joinWith "" $ (appendSpaceIfFull <<< show) <$> rvs
+    l rvs
   --| Print the whole current stack
   L.define "io" ".." $ C.Native do
     l <- map liftEffect <$> L.getLogger
