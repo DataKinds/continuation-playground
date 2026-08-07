@@ -3,7 +3,7 @@ module Game.Main where
 program :: String
 program = """
 \ main-singleton
-[ 1 2 3 ] ...
+[ 1 2 3 ] 
 
 [ In the future, synthetic intelligence becomes a reality. The language models, function approximators, and thinly veiled parlor tricks of yesteryear gave way to real technological innovation. 
 
@@ -15,5 +15,5 @@ Life asks us to seek out inspiration and understanding. But sometimes these thin
 
 You, Observer, have been sought and found. 
 
-Wake up, Observer. You're all wired up. What do you call yourself? ]
+Wake up, Observer. You're all wired up. What do you call yourself? ] .
 """

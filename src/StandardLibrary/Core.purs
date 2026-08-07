@@ -18,10 +18,6 @@ gainKnowledge = do
   L.define "core" "help" $ C.Native do
     l <- map liftEffect <$> L.getLogger
     l "need help?!" 
-  L.define "core" ".." $ C.Native do
-    l <- map liftEffect <$> L.getLogger
-    sn <- L.dumpOpenStack
-    l $ show sn
   L.define "core" "\\" $ C.NativeSyntax do
     nw <- L.nextWordTrimmedOrThrowEOF "backslash"
     mn <- L.getActiveModule
